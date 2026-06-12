@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.2.3 (2026-06-12)
+
+### Bug Fixes
+
+- force npm oidc publishing (ee8ee3e)
+
 ## 0.2.2 (2026-06-12)
 
 ### Bug Fixes
