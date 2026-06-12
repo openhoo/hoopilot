@@ -19,7 +19,7 @@
   "license": "MIT",
   "sideEffects": false,
   "bin": {
-    "hoopilot": "./dist/cli.js"
+    "hoopilot": "dist/cli.js"
   },
   "engines": {
     "bun": ">=1.3.0"

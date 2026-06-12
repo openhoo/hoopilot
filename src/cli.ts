@@ -3,8 +3,6 @@
 import { startHoopilotServer } from "./server";
 import type { AuthMode, HoopilotServerOptions } from "./types";
 
-const VERSION = "0.1.0";
-
 interface ParsedArgs extends HoopilotServerOptions {
   help?: boolean;
   version?: boolean;
@@ -13,11 +11,11 @@ interface ParsedArgs extends HoopilotServerOptions {
 export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(helpText());
+    console.log(helpText(await packageVersion()));
     return;
   }
   if (args.version) {
-    console.log(VERSION);
+    console.log(await packageVersion());
     return;
   }
 
@@ -111,8 +109,17 @@ function parseAuthMode(value: string): AuthMode {
   throw new Error(`Invalid auth mode: ${value}.`);
 }
 
-function helpText(): string {
-  return `hoopilot ${VERSION}
+async function packageVersion(): Promise<string> {
+  try {
+    const manifest = await Bun.file(new URL("../package.json", import.meta.url)).json();
+    return typeof manifest.version === "string" ? manifest.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+function helpText(version: string): string {
+  return `hoopilot ${version}
 
 OpenAI-compatible proxy for GitHub Copilot.
 

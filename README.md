@@ -13,6 +13,12 @@ This project uses GitHub Copilot's service endpoints and is not an official GitH
 npx @openhoo/hoopilot
 ```
 
+Before the npm package is published, run the same binary directly from GitHub:
+
+```sh
+npx github:openhoo/hoopilot
+```
+
 By default Hoopilot listens on `127.0.0.1:4141`, reads a GitHub token from `COPILOT_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth token`, and exchanges it for a Copilot API token when GitHub supports the exchange endpoint for the account.
 
 For a local API key:
@@ -26,6 +32,16 @@ Point OpenAI-compatible clients at:
 ```sh
 OPENAI_BASE_URL=http://127.0.0.1:4141/v1
 OPENAI_API_KEY=local-key
+```
+
+Use with Codex CLI after Hoopilot is running:
+
+```sh
+OPENAI_API_KEY=local-key codex -m claude-sonnet-4.6 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+```
+
+```powershell
+$env:OPENAI_API_KEY="local-key"; codex -m claude-sonnet-4.6 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
@@ -43,6 +59,12 @@ or:
 
 ```sh
 COPILOT_GITHUB_TOKEN=$(gh auth token) npx @openhoo/hoopilot
+```
+
+You can also [create a fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) for the GitHub account that has Copilot access. GitHub's [personal access token documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) explains how fine-grained tokens and permissions work.
+
+```sh
+COPILOT_GITHUB_TOKEN=github_pat_... HOOPILOT_API_KEY=local-key npx @openhoo/hoopilot
 ```
 
 Supported credential environment variables:
@@ -115,7 +137,7 @@ bun run biome:fix
 
 Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, then publishes the package through npm trusted publishing.
 
-Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com before relying on automatic publication.
+Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com, then set the GitHub repository variable `NPM_PUBLISH_ENABLED=true` before relying on automatic npm publication. Release commits and GitHub releases can still be created before npm publication is enabled.
 
 ## License
 
