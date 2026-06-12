@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.2.1 (2026-06-12)
+
+### Bug Fixes
+
+- gate npm publish until enabled (74100f6)
+
 ## 0.2.0 (2026-06-12)
 
 ### Features
