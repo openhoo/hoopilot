@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "dependencyDashboard": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["HOOVERSION_VERSION:\\s*[\"']?(?<currentValue>[^\\s\"']+)[\"']?"],
+      "depNameTemplate": "@openhoo/hooversion",
+      "packageNameTemplate": "@openhoo/hooversion",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["@openhoo/hooversion"],
+      "groupName": "hooversion",
+      "dependencyDashboardApproval": false,
+      "automerge": true,
+      "automergeType": "branch"
+    }
+  ]
+}

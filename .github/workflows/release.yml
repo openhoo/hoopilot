@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+env:
+  HOOVERSION_VERSION: 0.1.1
+
+jobs:
+  release:
+    name: Release
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && !contains(github.event.workflow_run.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+
+      - name: Release
+        id: release
+        uses: openhoo/hooversion/actions/release@f5ee7eef255519b4ef33f4a93c7223805113c3a2
+        with:
+          version: ${{ env.HOOVERSION_VERSION }}
+          bun-version: 1.3.14
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-command: bun install --frozen-lockfile
+
+      - name: Set up Node for npm trusted publishing
+        if: steps.release.outputs.published == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Check published package version
+        if: steps.release.outputs.published == 'true'
+        id: package
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if bun info "@openhoo/hoopilot@${PACKAGE_VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish package to npm
+        if: steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
+        run: npm publish --access public --provenance

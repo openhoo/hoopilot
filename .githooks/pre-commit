@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+bunx --no-install biome check --staged --error-on-warnings
