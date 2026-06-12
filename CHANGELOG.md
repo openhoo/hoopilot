@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.2.4 (2026-06-12)
+
+### Bug Fixes
+
+- remove unsupported PAT auth path (675ed55)
+
 ## 0.2.3 (2026-06-12)
 
 ### Bug Fixes
