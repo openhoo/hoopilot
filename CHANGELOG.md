@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.2.2 (2026-06-12)
+
+### Bug Fixes
+
+- publish with npm trusted publishing (e8b1415)
+
 ## 0.2.1 (2026-06-12)
 
 ### Bug Fixes
