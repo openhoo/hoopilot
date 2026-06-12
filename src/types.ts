@@ -1,4 +1,4 @@
-export type AuthMode = "auto" | "copilot-token" | "github-token" | "direct-github-token";
+export type AuthMode = "auto" | "copilot-token";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 

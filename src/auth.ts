@@ -5,18 +5,14 @@ const DEFAULT_COPILOT_API_BASE_URL = "https://api.individual.githubcopilot.com";
 const DEFAULT_TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token";
 const REFRESH_SKEW_MS = 60_000;
 
-const defaultLogger: Logger = {
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-};
-
 export class CopilotAuthError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CopilotAuthError";
   }
 }
+
+class CopilotTokenExchangeHttpError extends CopilotAuthError {}
 
 export class CopilotAuth {
   readonly #authMode: NonNullable<CopilotAuthOptions["authMode"]>;
@@ -26,7 +22,7 @@ export class CopilotAuth {
   readonly #fetch: FetchLike;
   readonly #githubToken?: string;
   readonly #githubTokenCommand: string | false;
-  readonly #logger: Logger;
+  readonly #logger?: Logger;
   readonly #tokenExchangeUrl: string;
   #cachedAccess?: CopilotAccess;
 
@@ -42,7 +38,7 @@ export class CopilotAuth {
     this.#fetch = options.fetch ?? fetch;
     this.#githubToken = options.githubToken;
     this.#githubTokenCommand = options.githubTokenCommand ?? "gh auth token";
-    this.#logger = options.logger ?? defaultLogger;
+    this.#logger = options.logger;
     this.#tokenExchangeUrl =
       options.tokenExchangeUrl ??
       options.env?.COPILOT_TOKEN_EXCHANGE_URL ??
@@ -55,18 +51,6 @@ export class CopilotAuth {
     }
 
     const directCopilotToken = this.#resolveDirectCopilotToken();
-    if (this.#authMode === "copilot-token") {
-      if (!directCopilotToken) {
-        throw new CopilotAuthError("COPILOT_API_TOKEN or GITHUB_COPILOT_API_TOKEN is required.");
-      }
-      return this.#cacheAccess({
-        apiBaseUrl: this.#copilotApiBaseUrl,
-        expiresAtMs: Date.now() + 10 * 60_000,
-        source: "copilot-token",
-        token: directCopilotToken,
-      });
-    }
-
     if (directCopilotToken) {
       return this.#cacheAccess({
         apiBaseUrl: this.#copilotApiBaseUrl,
@@ -76,31 +60,33 @@ export class CopilotAuth {
       });
     }
 
+    if (this.#authMode === "copilot-token") {
+      throw new CopilotAuthError("COPILOT_API_TOKEN or GITHUB_COPILOT_API_TOKEN is required.");
+    }
+
     const githubToken = this.#resolveGithubToken();
     if (!githubToken) {
       throw new CopilotAuthError(
-        "No Copilot credential found. Set COPILOT_GITHUB_TOKEN, GITHUB_TOKEN, or sign in with gh auth login.",
+        "No Copilot credential found. Set COPILOT_API_TOKEN, set COPILOT_GITHUB_TOKEN from gh auth token, or sign in with gh auth login.",
       );
     }
 
-    if (this.#authMode === "direct-github-token") {
-      return this.#cacheAccess({
-        apiBaseUrl: this.#copilotApiBaseUrl,
-        expiresAtMs: Date.now() + 10 * 60_000,
-        source: "direct-github-token",
-        token: githubToken,
-      });
+    if (isPersonalAccessToken(githubToken)) {
+      throw new CopilotAuthError(
+        "GitHub personal access tokens are not supported for Copilot authentication. Use gh auth login or COPILOT_API_TOKEN.",
+      );
     }
 
     try {
-      const exchanged = await this.#exchangeGithubToken(githubToken);
-      return this.#cacheAccess(exchanged);
+      return this.#cacheAccess(await this.#exchangeGithubToken(githubToken));
     } catch (error) {
-      if (this.#authMode === "github-token") {
+      if (!(error instanceof CopilotTokenExchangeHttpError)) {
         throw error;
       }
-      this.#logger.warn(
-        `Copilot token exchange failed; falling back to direct GitHub token mode: ${errorMessage(error)}`,
+      this.#logger?.warn(
+        `Copilot token exchange failed; falling back to GitHub CLI token mode: ${errorMessage(
+          error,
+        )}`,
       );
       return this.#cacheAccess({
         apiBaseUrl: this.#copilotApiBaseUrl,
@@ -129,7 +115,7 @@ export class CopilotAuth {
     });
 
     if (!response.ok) {
-      throw new CopilotAuthError(
+      throw new CopilotTokenExchangeHttpError(
         `GitHub Copilot token exchange failed with ${response.status}: ${await safeResponseText(
           response,
         )}`,
@@ -164,8 +150,6 @@ export class CopilotAuth {
       this.#githubToken,
       this.#env.COPILOT_GITHUB_TOKEN,
       this.#env.GITHUB_COPILOT_GITHUB_TOKEN,
-      this.#env.GH_TOKEN,
-      this.#env.GITHUB_TOKEN,
       this.#readGithubTokenCommand(),
     );
   }
@@ -293,6 +277,10 @@ function trimTrailingSlash(value: string): string {
 async function safeResponseText(response: Response): Promise<string> {
   const text = await response.text();
   return text.slice(0, 500);
+}
+
+function isPersonalAccessToken(token: string): boolean {
+  return token.startsWith("github_pat_") || token.startsWith("ghp_");
 }
 
 function errorMessage(error: unknown): string {

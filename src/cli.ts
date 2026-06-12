@@ -98,12 +98,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function parseAuthMode(value: string): AuthMode {
-  if (
-    value === "auto" ||
-    value === "copilot-token" ||
-    value === "github-token" ||
-    value === "direct-github-token"
-  ) {
+  if (value === "auto" || value === "copilot-token") {
     return value;
   }
   throw new Error(`Invalid auth mode: ${value}.`);
@@ -131,8 +126,8 @@ Options:
   -p, --port <port>                 Port to listen on. Default: 4141
       --host <host>                 Host to listen on. Default: 127.0.0.1
       --api-key <key>               Require clients to send Authorization: Bearer <key>
-      --auth-mode <mode>            auto, github-token, direct-github-token, copilot-token
-      --github-token <token>        GitHub OAuth token for a Copilot account
+      --auth-mode <mode>            auto, copilot-token
+      --github-token <token>        GitHub CLI OAuth token for a Copilot account. PATs are rejected.
       --github-token-command <cmd>  Command used to read a GitHub token. Default: gh auth token
       --copilot-token <token>       Short-lived Copilot API bearer token
       --copilot-api-base-url <url>  Copilot API base URL override
@@ -143,7 +138,7 @@ Options:
 
 Environment:
   HOOPILOT_API_KEY
-  COPILOT_GITHUB_TOKEN, GITHUB_TOKEN, GH_TOKEN
+  COPILOT_GITHUB_TOKEN
   COPILOT_API_TOKEN, GITHUB_COPILOT_API_TOKEN
   COPILOT_API_BASE_URL
 `;

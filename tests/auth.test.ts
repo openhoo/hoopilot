@@ -36,28 +36,28 @@ describe("CopilotAuth", () => {
     const auth = new CopilotAuth({
       env: {},
       fetch: async () => new Response("no exchange", { status: 404 }),
-      githubToken: "github-token",
+      githubToken: "gho_oauth-token",
       githubTokenCommand: false,
     });
 
     const access = await auth.getAccess();
     expect(access.source).toBe("direct-github-token");
-    expect(access.token).toBe("github-token");
+    expect(access.token).toBe("gho_oauth-token");
   });
 
-  it("supports direct GitHub token mode from a token command", async () => {
-    const auth = new CopilotAuth({
-      authMode: "direct-github-token",
-      env: { COPILOT_API_BASE_URL: "https://copilot.example/" },
-      githubTokenCommand: "printf command-token",
-    });
+  it("rejects personal access tokens", async () => {
+    for (const token of ["ghp_classic-token", "github_pat_fine-grained-token"]) {
+      const auth = new CopilotAuth({
+        env: {},
+        fetch: async () => {
+          throw new Error("fetch should not be called");
+        },
+        githubToken: token,
+        githubTokenCommand: false,
+      });
 
-    const access = await auth.getAccess();
-    expect(access).toMatchObject({
-      apiBaseUrl: "https://copilot.example",
-      source: "direct-github-token",
-      token: "command-token",
-    });
+      await expect(auth.getAccess()).rejects.toThrow("personal access tokens");
+    }
   });
 
   it("uses a direct Copilot API token without exchange", async () => {
@@ -85,21 +85,8 @@ describe("CopilotAuth", () => {
     await expect(auth.getAccess()).rejects.toThrow("COPILOT_API_TOKEN");
   });
 
-  it("fails fast on exchange errors in github-token mode", async () => {
-    const auth = new CopilotAuth({
-      authMode: "github-token",
-      env: {},
-      fetch: async () => new Response("denied", { status: 403 }),
-      githubToken: "github-token",
-      githubTokenCommand: false,
-    });
-
-    await expect(auth.getAccess()).rejects.toThrow("403");
-  });
-
   it("rejects exchange responses without a token", async () => {
     const auth = new CopilotAuth({
-      authMode: "github-token",
       env: {},
       fetch: async () =>
         Response.json({ expires_at: new Date(Date.now() + 600_000).toISOString() }),

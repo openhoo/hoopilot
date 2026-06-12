@@ -19,7 +19,7 @@ Before the npm package is published, run the same binary directly from GitHub:
 npx github:openhoo/hoopilot
 ```
 
-By default Hoopilot listens on `127.0.0.1:4141`, reads a GitHub token from `COPILOT_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth token`, and exchanges it for a Copilot API token when GitHub supports the exchange endpoint for the account.
+By default Hoopilot listens on `127.0.0.1:4141`, uses `COPILOT_API_TOKEN` when provided, otherwise reads a GitHub CLI OAuth token from `COPILOT_GITHUB_TOKEN` or `gh auth token`, and uses that token with Copilot.
 
 For a local API key:
 
@@ -61,15 +61,11 @@ or:
 COPILOT_GITHUB_TOKEN=$(gh auth token) npx @openhoo/hoopilot
 ```
 
-You can also [create a fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) for the GitHub account that has Copilot access. GitHub's [personal access token documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) explains how fine-grained tokens and permissions work.
-
-```sh
-COPILOT_GITHUB_TOKEN=github_pat_... HOOPILOT_API_KEY=local-key npx @openhoo/hoopilot
-```
+Personal access tokens are not supported by GitHub Copilot's token exchange or chat endpoints. Hoopilot rejects classic and fine-grained PAT prefixes. Use `gh auth token` for the GitHub CLI OAuth path, or pass a short-lived Copilot bearer token with `COPILOT_API_TOKEN`.
 
 Supported credential environment variables:
 
-- `COPILOT_GITHUB_TOKEN`, `GITHUB_COPILOT_GITHUB_TOKEN`, `GITHUB_TOKEN`, or `GH_TOKEN`: GitHub OAuth token for an account with Copilot access.
+- `COPILOT_GITHUB_TOKEN` or `GITHUB_COPILOT_GITHUB_TOKEN`: GitHub CLI OAuth token for an account with Copilot access. Personal access tokens are rejected.
 - `COPILOT_API_TOKEN`, `GITHUB_COPILOT_API_TOKEN`, or `GITHUB_COPILOT_TOKEN`: short-lived Copilot API bearer token.
 - `COPILOT_API_BASE_URL`: upstream Copilot API base URL override.
 - `COPILOT_TOKEN_EXCHANGE_URL`: GitHub token exchange endpoint override.
@@ -78,12 +74,10 @@ Auth modes:
 
 ```sh
 npx @openhoo/hoopilot --auth-mode auto
-npx @openhoo/hoopilot --auth-mode github-token
-npx @openhoo/hoopilot --auth-mode direct-github-token
 npx @openhoo/hoopilot --auth-mode copilot-token
 ```
 
-`auto` first tries the GitHub Copilot token exchange endpoint, then falls back to direct GitHub-token mode against the individual Copilot API base URL. Use `github-token` when you want exchange failures to fail fast.
+`auto` uses a direct Copilot token when one is configured, otherwise it uses GitHub's Copilot token exchange endpoint and falls back to the GitHub CLI OAuth token when the exchange endpoint is unavailable.
 
 ## CLI
 
@@ -97,8 +91,8 @@ Options:
 -p, --port <port>                 Port to listen on. Default: 4141
     --host <host>                 Host to listen on. Default: 127.0.0.1
     --api-key <key>               Require clients to send Authorization: Bearer <key>
-    --auth-mode <mode>            auto, github-token, direct-github-token, copilot-token
-    --github-token <token>        GitHub OAuth token for a Copilot account
+    --auth-mode <mode>            auto, copilot-token
+    --github-token <token>        GitHub CLI OAuth token for a Copilot account. PATs are rejected.
     --github-token-command <cmd>  Command used to read a GitHub token. Default: gh auth token
     --copilot-token <token>       Short-lived Copilot API bearer token
     --copilot-api-base-url <url>  Copilot API base URL override
