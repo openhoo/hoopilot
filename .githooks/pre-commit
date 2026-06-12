@@ -1,4 +1,19 @@
 #!/bin/sh
 set -eu
 
-bunx --no-install biome check --staged --error-on-warnings
+output_file="$(mktemp)"
+if bunx --no-install biome check --staged --error-on-warnings >"$output_file" 2>&1; then
+  cat "$output_file"
+  rm -f "$output_file"
+  exit 0
+fi
+
+status=$?
+cat "$output_file"
+if grep -q "No files were processed" "$output_file"; then
+  rm -f "$output_file"
+  exit 0
+fi
+
+rm -f "$output_file"
+exit "$status"

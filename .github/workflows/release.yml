@@ -14,7 +14,6 @@ permissions:
 
 env:
   HOOVERSION_VERSION: 0.1.1
-  NPM_PUBLISH_ENABLED: ${{ vars.NPM_PUBLISH_ENABLED }}
 
 jobs:
   release:
@@ -48,7 +47,7 @@ jobs:
           install-command: bun install --frozen-lockfile
 
       - name: Set up Node for npm trusted publishing
-        if: steps.release.outputs.published == 'true' && env.NPM_PUBLISH_ENABLED == 'true'
+        if: steps.release.outputs.published == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "24.x"
@@ -56,7 +55,7 @@ jobs:
           package-manager-cache: false
 
       - name: Check published package version
-        if: steps.release.outputs.published == 'true' && env.NPM_PUBLISH_ENABLED == 'true'
+        if: steps.release.outputs.published == 'true'
         id: package
         env:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
@@ -69,13 +68,9 @@ jobs:
           fi
 
       - name: Build package for npm
-        if: steps.release.outputs.published == 'true' && env.NPM_PUBLISH_ENABLED == 'true' && steps.package.outputs.exists != 'true'
+        if: steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
         run: bun run build
 
       - name: Publish package to npm
-        if: steps.release.outputs.published == 'true' && env.NPM_PUBLISH_ENABLED == 'true' && steps.package.outputs.exists != 'true'
+        if: steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
         run: npm publish --access public --provenance --ignore-scripts
-
-      - name: Skip npm publish until trusted publishing is configured
-        if: steps.release.outputs.published == 'true' && env.NPM_PUBLISH_ENABLED != 'true'
-        run: echo "Set repository variable NPM_PUBLISH_ENABLED=true after configuring npm trusted publishing for @openhoo/hoopilot."

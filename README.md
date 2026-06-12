@@ -137,7 +137,7 @@ bun run biome:fix
 
 Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, then publishes the package through npm trusted publishing.
 
-Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com, then set the GitHub repository variable `NPM_PUBLISH_ENABLED=true` before relying on automatic npm publication. Release commits and GitHub releases can still be created before npm publication is enabled.
+Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com before relying on automatic publication. The workflow uses GitHub Actions OIDC with `npm publish --access public --provenance`.
 
 ## License
 
