@@ -51,7 +51,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "24.x"
-          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
       - name: Check published package version
@@ -73,4 +72,4 @@ jobs:
 
       - name: Publish package to npm
         if: steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
-        run: npm publish --access public --provenance --ignore-scripts
+        run: npm publish --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
