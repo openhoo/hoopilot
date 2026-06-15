@@ -1,6 +1,7 @@
 // Self-update and update-notification orchestration. The pure decision logic
 // lives in update-core.ts; this module performs the network and filesystem I/O.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -211,13 +212,13 @@ async function downloadToFile(url: string, dest: string, version: string): Promi
   if (!response.ok || !response.body) {
     throw new Error(`Download failed (${response.status}) for ${url}`);
   }
-  await Bun.write(dest, response);
+  await writeFile(dest, new Uint8Array(await response.arrayBuffer()));
 }
 
 async function sha256File(path: string): Promise<string> {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(await Bun.file(path).arrayBuffer());
-  return hasher.digest("hex");
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
 }
 
 async function verifyChecksum(
