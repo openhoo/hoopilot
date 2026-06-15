@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.3 (2026-06-15)
+
+### Bug Fixes
+
+- stop locked hoopilot exe during reinstall (5106974)
+
 ## 0.5.2 (2026-06-15)
 
 ### Bug Fixes
