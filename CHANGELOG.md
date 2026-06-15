@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.1 (2026-06-15)
+
+### Bug Fixes
+
+- install codexx standalone wrapper (844c729)
+
 ## 0.5.0 (2026-06-15)
 
 ### Bug Fixes
