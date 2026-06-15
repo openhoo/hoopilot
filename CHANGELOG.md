@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.2 (2026-06-15)
+
+### Bug Fixes
+
+- make windows installer reinstall cleanly (ff108d9)
+
 ## 0.5.1 (2026-06-15)
 
 ### Bug Fixes
