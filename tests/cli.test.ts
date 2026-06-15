@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { parseArgs, verifyCopilotOAuthToken } from "../src/cli";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeStoredCopilotAuth } from "../src/auth-store";
+import { parseArgs, runModels, verifyCopilotOAuthToken } from "../src/cli";
 import type { FetchLike } from "../src/types";
 
 describe("parseArgs", () => {
@@ -74,5 +78,46 @@ describe("verifyCopilotOAuthToken", () => {
         fetch: fetcher,
       }),
     ).rejects.toThrow("GitHub Copilot API verification failed with 403");
+  });
+});
+
+describe("runModels", () => {
+  it("prints the available Copilot model IDs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-cli-test-"));
+    try {
+      const authPath = join(dir, "auth.json");
+      writeStoredCopilotAuth(
+        {
+          apiBaseUrl: "https://api.githubcopilot.example",
+          token: "oauth-token",
+        },
+        authPath,
+      );
+
+      const requests: Request[] = [];
+      const fetcher: FetchLike = async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({
+          data: [{ id: "gpt-4.1" }, { id: "gpt-5.5" }, { id: "gpt-5.5" }],
+        });
+      };
+      const lines: string[] = [];
+      const originalLog = console.log;
+      console.log = (...values: unknown[]) => {
+        lines.push(values.join(" "));
+      };
+      try {
+        const ids = await runModels({ authStorePath: authPath, fetch: fetcher });
+        expect(ids).toEqual(["gpt-4.1", "gpt-5.5"]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(lines).toEqual(["gpt-4.1", "gpt-5.5"]);
+      expect(requests[0]!.url).toBe("https://api.githubcopilot.example/models");
+      expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });

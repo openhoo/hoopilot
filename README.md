@@ -213,6 +213,7 @@ If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` an
 ```powershell
 hoopilot [serve] [options]
 hoopilot login [options]
+hoopilot models [options]
 ```
 
 Commands:
@@ -220,6 +221,7 @@ Commands:
 ```txt
 serve                             Start the proxy server (default)
 login                             Sign in through GitHub OAuth in a browser and verify Copilot access
+models                            List available GitHub Copilot model IDs
 update, upgrade                   Update hoopilot to the latest release
 ```
 

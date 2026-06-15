@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { CopilotAuthError } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
+import { CopilotClient } from "./copilot";
 import { githubCopilotDeviceLogin } from "./github-device";
 import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
 import { startHoopilotServer } from "./server";
@@ -55,6 +56,20 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
       level: args.logLevel,
     }).child({ component: "cli", command: "login" });
     await runLogin(args);
+    return;
+  }
+  if (command === "models") {
+    const args = withRuntimeEnv(parseArgs(argv.slice(1)));
+    if (args.help) {
+      console.log(helpText(await getVersion()));
+      return;
+    }
+    args.logger = createHoopilotLogger({
+      env: args.env,
+      format: args.logFormat,
+      level: args.logLevel,
+    }).child({ component: "cli", command: "models" });
+    await runModels(args);
     return;
   }
 
@@ -195,6 +210,36 @@ async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
   console.log("Copilot authentication ready.");
 }
 
+export async function runModels(options: HoopilotServerOptions = {}): Promise<string[]> {
+  const logger = options.logger?.child({ component: "models" }) ?? noopLogger;
+  logger.debug({ event: "models.list.started" }, "fetching github copilot models");
+
+  const response = await new CopilotClient(options).models();
+  if (!response.ok) {
+    const message = `GitHub Copilot API model list failed with ${
+      response.status
+    }: ${await safeResponseText(response)}`;
+    if (response.status === 401 || response.status === 403) {
+      throw new CopilotAuthError(message);
+    }
+    throw new Error(message);
+  }
+
+  const ids = modelIdsFromResponse(await response.json().catch(() => undefined));
+  if (ids.length === 0) {
+    throw new Error("GitHub Copilot API returned no model IDs.");
+  }
+
+  logger.debug(
+    { count: ids.length, event: "models.list.succeeded" },
+    "github copilot models fetched",
+  );
+  for (const id of ids) {
+    console.log(id);
+  }
+  return ids;
+}
+
 export async function verifyCopilotOAuthToken(
   token: string,
   options: VerifyCopilotOAuthTokenOptions = {},
@@ -263,6 +308,28 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function modelIdsFromResponse(body: unknown): string[] {
+  const record = asRecord(body);
+  const data = Array.isArray(record.data) ? record.data : Array.isArray(body) ? body : [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const model of data) {
+    const id = asRecord(model).id;
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function withRuntimeEnv(args: ParsedArgs): ParsedArgs {
   return { ...args, env: process.env };
 }
@@ -275,12 +342,14 @@ OpenAI-compatible proxy for GitHub Copilot.
 Usage:
   hoopilot [serve] [options]
   hoopilot login [options]
+  hoopilot models [options]
   hoopilot update
   npx @openhoo/hoopilot [options]
 
 Commands:
   serve                             Start the proxy server (default)
   login                             Sign in through GitHub OAuth in a browser and verify Copilot access
+  models                            List available GitHub Copilot model IDs
   update, upgrade                   Update hoopilot to the latest release
 
 Options:
