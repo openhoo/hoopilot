@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.3.0 (2026-06-15)
+
+### Features
+
+- add binary install and self-update (445373e)
+
 ## 0.2.4 (2026-06-12)
 
 ### Bug Fixes
