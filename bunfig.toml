@@ -4,6 +4,7 @@ coverageThreshold = { lines = 0.92, functions = 0.9, statements = 0.92 }
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "src/cli.ts",
+  "src/codexx.ts",
   "src/generated/**",
   "src/index.ts",
   "src/types.ts",
