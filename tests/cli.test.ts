@@ -10,12 +10,17 @@ describe("parseArgs", () => {
         "--auth-file",
         "/tmp/hoopilot-auth.json",
         "--copilot-api-base-url=https://api.githubcopilot.example",
+        "--log-format",
+        "pretty",
+        "--log-level=debug",
         "--port",
         "4242",
       ]),
     ).toMatchObject({
       authStorePath: "/tmp/hoopilot-auth.json",
       copilotApiBaseUrl: "https://api.githubcopilot.example",
+      logFormat: "pretty",
+      logLevel: "debug",
       port: 4242,
     });
   });
@@ -30,6 +35,11 @@ describe("parseArgs", () => {
     ]) {
       expect(() => parseArgs([option, "value"])).toThrow("Unknown option");
     }
+  });
+
+  it("rejects invalid logging options", () => {
+    expect(() => parseArgs(["--log-level", "verbose"])).toThrow("Invalid log level");
+    expect(() => parseArgs(["--log-format", "text"])).toThrow("Invalid log format");
   });
 });
 

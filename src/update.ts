@@ -13,6 +13,7 @@ import {
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { HoopilotLogger } from "./types";
 import {
   assetNameFor,
   assetSuffixFor,
@@ -106,29 +107,53 @@ async function fetchLatest(version: string, etag?: string | null): Promise<Fetch
  * off a throttled background refresh. Never blocks on the network and never
  * throws. Intended to be called (unawaited is fine) from the serve path.
  */
-export async function maybeNotifyUpdate(currentVersion: string, kind: InstallKind): Promise<void> {
+export async function maybeNotifyUpdate(
+  currentVersion: string,
+  kind: InstallKind,
+  logger?: HoopilotLogger,
+): Promise<void> {
   if (isUpdateCheckDisabled(process.env, Boolean(process.stderr.isTTY))) {
+    logger?.debug({ event: "update.check.skipped" }, "update check skipped");
     return;
   }
   const state = await readStateSafe();
   if (state.latestVersion && isOutdated(currentVersion, state.latestVersion)) {
+    logger?.debug(
+      {
+        currentVersion,
+        event: "update.notice.cached",
+        installKind: kind,
+        latestVersion: state.latestVersion,
+      },
+      "showing cached update notice",
+    );
     process.stderr.write(formatUpdateNotice(currentVersion, state.latestVersion, kind));
   }
   if (shouldRefresh(state.lastCheck, Date.now())) {
-    void refreshState(currentVersion, state.etag ?? null).catch(() => {
-      // best effort
+    logger?.debug({ event: "update.check.refresh_queued" }, "queued update check refresh");
+    void refreshState(currentVersion, state.etag ?? null, logger).catch((error: unknown) => {
+      logger?.debug(
+        { err: errorDetails(error), event: "update.check.refresh_failed" },
+        "update check refresh failed",
+      );
     });
   }
 }
 
-async function refreshState(currentVersion: string, etag: string | null): Promise<void> {
+async function refreshState(
+  currentVersion: string,
+  etag: string | null,
+  logger?: HoopilotLogger,
+): Promise<void> {
   const result = await fetchLatest(currentVersion, etag);
   if (!result) {
+    logger?.debug({ event: "update.check.unavailable" }, "update check unavailable");
     return; // network error: keep prior state
   }
   if (result.status === 304) {
     const prev = await readStateSafe();
     await writeStateSafe({ ...prev, lastCheck: Date.now() });
+    logger?.debug({ event: "update.check.not_modified" }, "latest release unchanged");
     return;
   }
   if (result.release) {
@@ -137,6 +162,10 @@ async function refreshState(currentVersion: string, etag: string | null): Promis
       latestVersion: result.release.version,
       etag: result.etag,
     });
+    logger?.debug(
+      { event: "update.check.updated", latestVersion: result.release.version },
+      "updated cached latest release state",
+    );
   }
 }
 
@@ -287,9 +316,10 @@ export function cleanupOldBinary(): void {
 }
 
 /** Implements the `hoopilot update` command. */
-export async function runUpdate(currentVersion: string): Promise<void> {
+export async function runUpdate(currentVersion: string, logger?: HoopilotLogger): Promise<void> {
   cleanupOldBinary();
   const kind = detectInstallKind();
+  logger?.debug({ currentVersion, event: "update.started", installKind: kind }, "update started");
 
   if (kind !== "binary") {
     console.log(`hoopilot ${currentVersion} was installed via npm.`);
@@ -304,6 +334,10 @@ export async function runUpdate(currentVersion: string): Promise<void> {
     throw new Error("Could not reach GitHub to check for the latest release.");
   }
   if (!isOutdated(currentVersion, release.version)) {
+    logger?.debug(
+      { currentVersion, event: "update.already_current", latestVersion: release.version },
+      "hoopilot is already up to date",
+    );
     console.log(`Already up to date (latest: ${release.version}).`);
     return;
   }
@@ -317,6 +351,15 @@ export async function runUpdate(currentVersion: string): Promise<void> {
   }
 
   console.log(`Updating ${currentVersion} → ${release.version} (${assetName})...`);
+  logger?.debug(
+    {
+      assetName,
+      currentVersion,
+      event: "update.installing",
+      latestVersion: release.version,
+    },
+    "installing update",
+  );
   const exePath = realpathSync(process.execPath);
   const tmpFile = join(dirname(exePath), `.hoopilot-update-${process.pid}.tmp`);
   try {
@@ -343,7 +386,22 @@ export async function runUpdate(currentVersion: string): Promise<void> {
   }
 
   console.log(`Updated hoopilot to ${release.version}.`);
+  logger?.debug(
+    { currentVersion, event: "update.completed", latestVersion: release.version },
+    "update completed",
+  );
   if (process.platform === "win32") {
     console.log("Restart hoopilot to run the new version.");
   }
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
 }

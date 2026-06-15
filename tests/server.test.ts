@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
 import { createHoopilotHandler, startHoopilotServer } from "../src/server";
-import type { FetchLike, HoopilotServerOptions } from "../src/types";
+import type { FetchLike, HoopilotLogger, HoopilotServerOptions, LogFields } from "../src/types";
 
 describe("createHoopilotHandler", () => {
   it("proxies chat completions to Copilot", async () => {
@@ -69,6 +69,51 @@ describe("createHoopilotHandler", () => {
 
     const missing = await handler(new Request("http://localhost/missing"));
     expect(missing.status).toBe(404);
+  });
+
+  it("adds request ids and emits structured request completion logs", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      env: {},
+      fetch: unusedFetch,
+      logger: logs.logger,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/healthz", {
+        headers: { "x-request-id": "req-test" },
+      }),
+    );
+
+    expect(response.headers.get("x-request-id")).toBe("req-test");
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          event: "http.request.completed",
+          method: "GET",
+          path: "/healthz",
+          requestId: "req-test",
+          route: "health",
+          status: 200,
+          stream: false,
+        }),
+        level: "info",
+        message: "request completed",
+      }),
+    );
+  });
+
+  it("creates a logger from server logging options", async () => {
+    const handler = createHoopilotHandler({
+      env: {},
+      fetch: unusedFetch,
+      logLevel: "silent",
+    });
+
+    const response = await handler(new Request("http://localhost/healthz"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBeTruthy();
   });
 
   it("serves Responses API requests by translating to chat completions", async () => {
@@ -159,6 +204,24 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("maps legacy completions upstream errors", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => new Response("legacy failed", { status: 502 })),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: "hello" }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "copilot_error", message: "legacy failed" },
+    });
+  });
+
   it("maps upstream auth failures to copilot auth errors", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("forbidden", { status: 403 })),
@@ -229,6 +292,30 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("logs upstream model fallback without logging the upstream body", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => new Response("secret upstream body", { status: 500 })),
+      logger: logs.logger,
+    });
+
+    const response = await handler(new Request("http://localhost/v1/models"));
+
+    expect(response.status).toBe(200);
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          event: "copilot.models.fallback",
+          upstreamPath: "/models",
+          upstreamStatus: 500,
+        }),
+        level: "warn",
+        message: "falling back to built-in model list",
+      }),
+    );
+    expect(JSON.stringify(logs.entries)).not.toContain("secret upstream body");
+  });
+
   it("does not hide upstream model auth failures behind fallback models", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("forbidden", { status: 403 })),
@@ -242,15 +329,44 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("reports missing OAuth credentials and logs the auth failure", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      authStorePath: join(mkdtempSync(join(tmpdir(), "hoopilot-missing-auth-test-")), "auth.json"),
+      env: {},
+      fetch: unusedFetch,
+      logger: logs.logger,
+    });
+
+    const response = await handler(new Request("http://localhost/v1/models"));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "copilot_auth_error" },
+    });
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          event: "copilot.auth.missing",
+          route: "models",
+        }),
+        level: "warn",
+        message: "copilot auth failed",
+      }),
+    );
+  });
+
   it("reports invalid JSON bodies", async () => {
+    const logs = captureLogger();
     const handler = createHoopilotHandler({
       env: {},
       fetch: unusedFetch,
+      logger: logs.logger,
     });
 
     const response = await handler(
       new Request("http://localhost/v1/responses", {
-        body: "{",
+        body: "{secret prompt text",
         method: "POST",
       }),
     );
@@ -259,6 +375,62 @@ describe("createHoopilotHandler", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "internal_error", message: "Request body must be valid JSON." },
     });
+    expect(JSON.stringify(logs.entries)).not.toContain("secret prompt text");
+  });
+
+  it("does not log local API keys or request bodies", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      apiKey: "local-key",
+      env: {},
+      fetch: unusedFetch,
+      logger: logs.logger,
+    });
+
+    await handler(
+      new Request("http://localhost/v1/responses", {
+        body: "{not-json secret prompt text",
+        headers: { authorization: "Bearer wrong-key" },
+        method: "POST",
+      }),
+    );
+
+    const serialized = JSON.stringify(logs.entries);
+    expect(serialized).not.toContain("local-key");
+    expect(serialized).not.toContain("wrong-key");
+    expect(serialized).not.toContain("secret prompt text");
+  });
+
+  it("logs unexpected non-error failures without crashing", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => {
+        throw "string failure";
+      }),
+      logger: logs.logger,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/chat/completions", {
+        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "internal_error", message: "string failure" },
+    });
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          err: { message: "string failure" },
+          event: "http.request.failed",
+        }),
+        level: "error",
+        message: "request failed",
+      }),
+    );
   });
 
   it("refuses non-loopback starts without an API key", () => {
@@ -300,4 +472,38 @@ function tempAuthPath(): string {
   const path = join(mkdtempSync(join(tmpdir(), "hoopilot-server-test-")), "auth.json");
   writeStoredCopilotAuth({ token: "oauth-token" }, path);
   return path;
+}
+
+interface CapturedLog {
+  fields: LogFields;
+  level: string;
+  message: string;
+}
+
+function captureLogger(bindings: LogFields = {}, entries: CapturedLog[] = []) {
+  const logger: HoopilotLogger = {
+    child: (childBindings) => captureLogger({ ...bindings, ...childBindings }, entries).logger,
+    debug: record("debug"),
+    error: record("error"),
+    fatal: record("fatal"),
+    info: record("info"),
+    trace: record("trace"),
+    warn: record("warn"),
+  };
+
+  function record(level: string) {
+    return (fieldsOrMessage: LogFields | string, message?: string) => {
+      if (typeof fieldsOrMessage === "string") {
+        entries.push({ fields: bindings, level, message: fieldsOrMessage });
+        return;
+      }
+      entries.push({
+        fields: { ...bindings, ...fieldsOrMessage },
+        level,
+        message: message ?? "",
+      });
+    };
+  }
+
+  return { entries, logger };
 }

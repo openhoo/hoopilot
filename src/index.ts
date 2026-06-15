@@ -3,6 +3,14 @@ export { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "./
 export { CopilotClient } from "./copilot";
 export { githubCopilotDeviceLogin } from "./github-device";
 export {
+  createHoopilotLogger,
+  DEFAULT_LOG_FORMAT,
+  DEFAULT_LOG_LEVEL,
+  noopLogger,
+  parseLogFormat,
+  parseLogLevel,
+} from "./logger";
+export {
   chatCompletionToCompletion,
   chatCompletionToResponse,
   completionsRequestToChatCompletion,
@@ -17,8 +25,14 @@ export type {
   CopilotAccess,
   CopilotAuthOptions,
   FetchLike,
+  HoopilotLogger,
+  HoopilotLoggerOptions,
   HoopilotServerOptions,
   JsonObject,
+  LogFields,
+  LogFormat,
   Logger,
+  LogLevel,
+  LogMethod,
   StartedHoopilotServer,
 } from "./types";

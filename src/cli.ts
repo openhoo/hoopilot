@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { CopilotAuthError } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
 import { githubCopilotDeviceLogin } from "./github-device";
+import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
 import { startHoopilotServer } from "./server";
 import type { CopilotAccess, FetchLike, HoopilotServerOptions } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
@@ -29,20 +30,35 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
 
   const command = argv[0];
   if (command === "update" || command === "upgrade") {
-    await runUpdate(await getVersion());
-    return;
-  }
-  if (command === "login") {
-    const args = parseArgs(argv.slice(1));
+    const args = withRuntimeEnv(parseArgs(argv.slice(1)));
     if (args.help) {
       console.log(helpText(await getVersion()));
       return;
     }
+    const logger = createHoopilotLogger({
+      env: args.env,
+      format: args.logFormat,
+      level: args.logLevel,
+    }).child({ component: "cli", command });
+    await runUpdate(await getVersion(), logger);
+    return;
+  }
+  if (command === "login") {
+    const args = withRuntimeEnv(parseArgs(argv.slice(1)));
+    if (args.help) {
+      console.log(helpText(await getVersion()));
+      return;
+    }
+    args.logger = createHoopilotLogger({
+      env: args.env,
+      format: args.logFormat,
+      level: args.logLevel,
+    }).child({ component: "cli", command: "login" });
     await runLogin(args);
     return;
   }
 
-  const args = parseArgs(argv);
+  const args = withRuntimeEnv(parseArgs(argv));
   if (args.help) {
     console.log(helpText(await getVersion()));
     return;
@@ -52,15 +68,30 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     return;
   }
 
+  const logger = createHoopilotLogger({
+    env: args.env,
+    format: args.logFormat,
+    level: args.logLevel,
+  }).child({ component: "cli", command: "serve" });
+  args.logger = logger;
   const started = startHoopilotServer(args);
-  console.log(`hoopilot listening on ${started.url}`);
-  console.log(`OpenAI base URL: ${started.url}/v1`);
-  console.log("Use Ctrl+C to stop.");
+  logger.info(
+    {
+      baseUrl: `${started.url}/v1`,
+      event: "server.started",
+      url: started.url,
+    },
+    "hoopilot server started",
+  );
 
   if (!args.noUpdateCheck && process.env.HOOPILOT_NO_UPDATE_CHECK !== "1") {
     // Non-blocking: prints a notice from the previous check and refreshes the
     // cache in the background. The running server keeps the refresh alive.
-    void maybeNotifyUpdate(await getVersion(), IS_STANDALONE_BINARY ? "binary" : "npm");
+    void maybeNotifyUpdate(
+      await getVersion(),
+      IS_STANDALONE_BINARY ? "binary" : "npm",
+      logger.child({ component: "update" }),
+    );
   }
 }
 
@@ -109,6 +140,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--copilot-api-base-url":
         args.copilotApiBaseUrl = value;
         break;
+      case "--log-format":
+        args.logFormat = parseLogFormat(value);
+        break;
+      case "--log-level":
+        args.logLevel = parseLogLevel(value);
+        break;
       case "--host":
         args.host = value;
         break;
@@ -128,6 +165,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
+  const logger = options.logger?.child({ component: "auth" }) ?? noopLogger;
+  logger.debug({ event: "auth.login.started" }, "starting github copilot browser login");
   console.log("Starting GitHub Copilot browser login...");
   const login = await githubCopilotDeviceLogin({
     env: options.env,
@@ -137,6 +176,10 @@ async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
 
   console.log("Checking GitHub Copilot access...");
   const access = await verifyCopilotOAuthToken(login.token, options);
+  logger.debug(
+    { apiBaseUrl: access.apiBaseUrl, event: "auth.login.verified" },
+    "github copilot oauth token verified",
+  );
   const path = options.authStorePath ?? authStorePath(options.env);
   writeStoredCopilotAuth(
     {
@@ -147,6 +190,7 @@ async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
     },
     path,
   );
+  logger.debug({ authStorePath: path, event: "auth.login.stored" }, "copilot credential stored");
   console.log(`Copilot OAuth credential stored at ${path}`);
   console.log("Copilot authentication ready.");
 }
@@ -219,6 +263,10 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function withRuntimeEnv(args: ParsedArgs): ParsedArgs {
+  return { ...args, env: process.env };
+}
+
 function helpText(version: string): string {
   return `hoopilot ${version}
 
@@ -241,6 +289,8 @@ Options:
       --api-key <key>               Require clients to send Authorization: Bearer <key>
       --auth-file <path>            OAuth credential store path
       --copilot-api-base-url <url>  Copilot API base URL override
+      --log-level <level>           trace, debug, info, warn, error, fatal, or silent
+      --log-format <format>         json or pretty. Default: pretty
       --no-update-check             Do not check GitHub for a newer release
       --allow-unauthenticated       Allow non-loopback bind without --api-key
   -h, --help                        Show help
@@ -251,6 +301,8 @@ Environment:
   HOOPILOT_AUTH_FILE
   HOOPILOT_GITHUB_CLIENT_ID
   HOOPILOT_GITHUB_DOMAIN
+  HOOPILOT_LOG_FORMAT               json or pretty. Default: pretty
+  HOOPILOT_LOG_LEVEL                trace, debug, info, warn, error, fatal, or silent
   COPILOT_API_BASE_URL
   HOOPILOT_NO_UPDATE_CHECK          Set to disable update checks (also NO_UPDATE_NOTIFIER)
 `;

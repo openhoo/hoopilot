@@ -110,6 +110,29 @@ $env:OPENAI_API_KEY = "local-key"; codex -m gpt-5.5 -c 'openai_base_url="http://
 
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
+## Logging
+
+Hoopilot uses Pino for structured logs. Server startup, request completion, upstream Copilot failures, model-list fallback, auth failures, and update-check diagnostics are logged with stable event names and request IDs. Logs never include request bodies, prompt text, completions, stream chunks, OAuth tokens, API keys, authorization headers, cookies, or auth-file contents.
+
+Console logs default to pretty output at `info` level:
+
+```powershell
+npx @openhoo/hoopilot --log-level info --log-format pretty
+```
+
+For machine-readable newline-delimited JSON:
+
+```powershell
+npx @openhoo/hoopilot --log-level info --log-format json
+```
+
+Equivalent environment variables:
+
+- `HOOPILOT_LOG_LEVEL`: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`. Default: `info`.
+- `HOOPILOT_LOG_FORMAT`: `json` or `pretty`. Default: `pretty`.
+
+Incoming `x-request-id` headers are preserved on responses. If a request has no ID, Hoopilot generates one and returns it as `x-request-id`.
+
 ## Authentication
 
 Hoopilot supports one credential flow: GitHub Copilot OAuth browser login.
@@ -174,6 +197,8 @@ Options:
     --api-key <key>               Require clients to send Authorization: Bearer <key>
     --auth-file <path>            OAuth credential store path
     --copilot-api-base-url <url>  Copilot API base URL override
+    --log-level <level>           trace, debug, info, warn, error, fatal, or silent
+    --log-format <format>         json or pretty. Default: pretty
     --no-update-check             Do not check GitHub for a newer release
     --allow-unauthenticated       Allow non-loopback bind without --api-key
 ```
