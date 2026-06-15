@@ -68,7 +68,7 @@ First sign in with GitHub Copilot OAuth in your browser:
 npx @openhoo/hoopilot login
 ```
 
-The login command prints a one-time code, opens `https://github.com/login/device` best-effort, verifies that the returned OAuth token can reach the Copilot API, and stores it in Hoopilot's auth file.
+The login command prints a one-time code, opens `https://github.com/login/device` best-effort, verifies that the returned OAuth token can reach the Copilot API, and stores it in Hoopilot's auth file. Re-run `npx @openhoo/hoopilot login` after upgrading Hoopilot if Copilot reports a supported model as unavailable; older stored tokens can have a reduced model set.
 
 Then start the proxy:
 
@@ -137,7 +137,10 @@ effort with `CODEXX_MODEL_REASONING_EFFORT`.
 `codexx` defaults to `gpt-5.5` with `model_reasoning_effort="xhigh"`. Codex sends
 those requests through its Responses API provider, and Hoopilot forwards them to
 Copilot's Responses endpoint because `gpt-5.5` is not available through Copilot's
-chat-completions endpoint.
+chat-completions endpoint. Before starting Codex, `codexx` checks
+`http://127.0.0.1:4141/v1/models` and reports if the logged-in Copilot account does
+not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models,
+or log in with a Copilot account that has `gpt-5.5`.
 
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
@@ -178,7 +181,7 @@ Direct bearer tokens, GitHub CLI token fallback, classic GitHub PATs, and fine-g
 Supported authentication-related settings:
 
 - `HOOPILOT_AUTH_FILE`: OAuth credential store path.
-- `HOOPILOT_GITHUB_CLIENT_ID`: GitHub OAuth app client ID override.
+- `HOOPILOT_GITHUB_CLIENT_ID`: GitHub OAuth app client ID override. The default uses the same GitHub Copilot OAuth app as opencode's Copilot provider.
 - `HOOPILOT_GITHUB_DOMAIN`: GitHub domain override. Default: `github.com`.
 - `COPILOT_API_BASE_URL`: upstream Copilot API base URL override. Default: `https://api.githubcopilot.com`.
 

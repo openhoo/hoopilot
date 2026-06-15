@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildCodexxInvocation } from "../src/codexx";
+import { buildCodexxInvocation, verifyCodexxModel } from "../src/codexx";
 
 describe("buildCodexxInvocation", () => {
   it("points Codex at the local Hoopilot server with gpt-5.5 xhigh defaults", () => {
@@ -13,6 +13,8 @@ describe("buildCodexxInvocation", () => {
     });
 
     expect(invocation.command).toBe("codex");
+    expect(invocation.baseUrl).toBe("http://127.0.0.1:4141/v1");
+    expect(invocation.model).toBe("gpt-5.5");
     expect(invocation.args).toEqual([
       "--disable",
       "network_proxy",
@@ -44,6 +46,8 @@ describe("buildCodexxInvocation", () => {
     });
 
     expect(invocation.command).toBe("/tmp/codex");
+    expect(invocation.baseUrl).toBe("http://127.0.0.1:5151/v1");
+    expect(invocation.model).toBe("claude-sonnet-4.6");
     expect(invocation.args).toEqual([
       "--disable",
       "network_proxy",
@@ -59,5 +63,32 @@ describe("buildCodexxInvocation", () => {
       "status",
     ]);
     expect(invocation.env.OPENAI_API_KEY).toBe("override-key");
+  });
+
+  it("preflights the requested model against the local models endpoint", async () => {
+    const requests: Request[] = [];
+    const invocation = buildCodexxInvocation([], {
+      HOOPILOT_API_KEY: "local-key",
+    });
+
+    await verifyCodexxModel(invocation, async (input, init) => {
+      requests.push(new Request(input, init));
+      return Response.json({ data: [{ id: "gpt-5.5" }] });
+    });
+
+    expect(requests[0]!.url).toBe("http://127.0.0.1:4141/v1/models");
+    expect(requests[0]!.headers.get("authorization")).toBe("Bearer local-key");
+  });
+
+  it("reports when the logged-in Copilot account does not advertise the requested model", async () => {
+    const invocation = buildCodexxInvocation([], {
+      HOOPILOT_API_KEY: "local-key",
+    });
+
+    await expect(
+      verifyCodexxModel(invocation, async () =>
+        Response.json({ data: [{ id: "gpt-4o" }, { id: "gpt-41-copilot" }] }),
+      ),
+    ).rejects.toThrow('The logged-in Copilot account does not advertise model "gpt-5.5"');
   });
 });

@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FetchLike, Logger } from "./types";
 
-export const DEFAULT_GITHUB_COPILOT_CLIENT_ID = "Iv23lijnNxm2e9UX3CF8";
+export const DEFAULT_GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
 const DEFAULT_GITHUB_DOMAIN = "github.com";
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const POLLING_SAFETY_MARGIN_MS = 3_000;
