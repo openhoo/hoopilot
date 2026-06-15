@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.5 (2026-06-15)
+
+### Bug Fixes
+
+- disable codex websocket probing for codexx (58d8d94)
+
 ## 0.5.4 (2026-06-15)
 
 ### Bug Fixes
