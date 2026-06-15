@@ -2,6 +2,11 @@ import type { JsonObject } from "./types";
 
 export const DEFAULT_MODEL = "gpt-4.1";
 
+const MODEL_ALIASES: Record<string, string> = {
+  "gpt-5.5": DEFAULT_MODEL,
+  "gpt-5.5-codex": DEFAULT_MODEL,
+};
+
 interface ResponseStreamOptions {
   model: string;
   responseId?: string;
@@ -30,7 +35,7 @@ export function responsesRequestToChatCompletion(request: JsonObject): JsonObjec
     max_tokens: request.max_output_tokens ?? request.max_tokens,
     messages,
     metadata: request.metadata,
-    model: contentToText(request.model) || DEFAULT_MODEL,
+    model: normalizeRequestedModel(request.model),
     presence_penalty: request.presence_penalty,
     reasoning_effort: asRecord(request.reasoning).effort,
     response_format: asRecord(request.text).format,
@@ -43,15 +48,30 @@ export function responsesRequestToChatCompletion(request: JsonObject): JsonObjec
   });
 }
 
+export function normalizeChatCompletionRequest(request: JsonObject): JsonObject {
+  return removeUndefined({
+    ...request,
+    model: normalizeRequestedModel(request.model),
+  });
+}
+
 export function completionsRequestToChatCompletion(request: JsonObject): JsonObject {
   return removeUndefined({
     max_tokens: request.max_tokens,
     messages: [{ content: promptToText(request.prompt), role: "user" }],
-    model: contentToText(request.model) || DEFAULT_MODEL,
+    model: normalizeRequestedModel(request.model),
     stream: request.stream === true,
     temperature: request.temperature,
     top_p: request.top_p,
   });
+}
+
+export function normalizeRequestedModel(model: unknown): string {
+  const requested = contentToText(model).trim();
+  if (!requested) {
+    return DEFAULT_MODEL;
+  }
+  return MODEL_ALIASES[requested.toLowerCase()] ?? requested;
 }
 
 export function chatCompletionToResponse(completion: JsonObject, responseId?: string): JsonObject {

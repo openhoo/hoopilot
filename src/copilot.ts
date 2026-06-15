@@ -21,17 +21,6 @@ export class CopilotClient {
     });
   }
 
-  async forwardChatCompletions(body: string, signal?: AbortSignal): Promise<Response> {
-    return this.fetchCopilot("/chat/completions", {
-      body,
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-      signal,
-    });
-  }
-
   async models(signal?: AbortSignal): Promise<Response> {
     return this.fetchCopilot("/models", {
       headers: {

@@ -16,7 +16,9 @@ export {
   completionsRequestToChatCompletion,
   DEFAULT_MODEL,
   fallbackModels,
+  normalizeChatCompletionRequest,
   normalizeModelsResponse,
+  normalizeRequestedModel,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
 } from "./openai";

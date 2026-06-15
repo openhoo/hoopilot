@@ -4,7 +4,9 @@ import {
   chatCompletionToResponse,
   completionsRequestToChatCompletion,
   fallbackModels,
+  normalizeChatCompletionRequest,
   normalizeModelsResponse,
+  normalizeRequestedModel,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
 } from "../src/openai";
@@ -102,6 +104,35 @@ describe("responsesRequestToChatCompletion", () => {
     );
     expect(chat.tool_choice).toEqual({ function: { name: "lookup" }, type: "function" });
     expect(chat.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("aliases Codex-only models before forwarding to Copilot", () => {
+    const chat = responsesRequestToChatCompletion({
+      input: "hello",
+      model: "gpt-5.5",
+    });
+
+    expect(chat.model).toBe("gpt-4.1");
+  });
+});
+
+describe("normalizeChatCompletionRequest", () => {
+  it("normalizes direct chat completion model names", () => {
+    expect(normalizeChatCompletionRequest({ messages: [], model: "gpt-5.5" })).toMatchObject({
+      model: "gpt-4.1",
+    });
+    expect(
+      normalizeChatCompletionRequest({ messages: [], model: "claude-sonnet-4" }),
+    ).toMatchObject({
+      model: "claude-sonnet-4",
+    });
+  });
+});
+
+describe("normalizeRequestedModel", () => {
+  it("defaults blank models and preserves non-aliased model names", () => {
+    expect(normalizeRequestedModel("")).toBe("gpt-4.1");
+    expect(normalizeRequestedModel("claude-sonnet-4")).toBe("claude-sonnet-4");
   });
 });
 

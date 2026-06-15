@@ -101,27 +101,27 @@ Use with Codex CLI after Hoopilot is running:
 
 ```powershell
 $env:OPENAI_API_KEY = "local-key"
-codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+codex -m gpt-4.1 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
 One-line PowerShell form:
 
 ```powershell
-$env:OPENAI_API_KEY = "local-key"; codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+$env:OPENAI_API_KEY = "local-key"; codex -m gpt-4.1 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
 Or use the bundled `codexx` convenience command after Hoopilot is already running:
 
 ```powershell
 $env:HOOPILOT_API_KEY = "local-key"
-codexx -m gpt-5.5
+codexx -m gpt-4.1
 ```
 
 Without a global install, run it through npm:
 
 ```powershell
 $env:HOOPILOT_API_KEY = "local-key"
-npx --package @openhoo/hoopilot codexx -m gpt-5.5
+npx --package @openhoo/hoopilot codexx -m gpt-4.1
 ```
 
 `codexx` does not start Hoopilot and does not change your shell environment. It runs
@@ -132,6 +132,10 @@ maps `HOOPILOT_API_KEY` to `OPENAI_API_KEY` for that child process, passes
 spawned Codex process so Codex talks directly to the local server. Override the local
 URL with `CODEXX_BASE_URL`, the local key with `CODEXX_API_KEY`, or the Codex
 executable with `CODEXX_CODEX_BIN`.
+
+Copilot only accepts model IDs supported by your Copilot account. Hoopilot defaults
+to `gpt-4.1`, aliases Codex-only `gpt-5.5` requests to `gpt-4.1`, and retries one
+clear Copilot "model not supported" error with `gpt-4.1`.
 
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
@@ -194,7 +198,7 @@ Then, in another PowerShell session:
 $env:OPENAI_API_KEY = "local-key"
 Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:OPENAI_API_KEY" } `
   http://127.0.0.1:4141/v1/models
-codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+codex -m gpt-4.1 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
 If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` and confirm the GitHub account has active Copilot access.

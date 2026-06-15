@@ -3,7 +3,7 @@ import { buildCodexxInvocation } from "../src/codexx";
 
 describe("buildCodexxInvocation", () => {
   it("points Codex at the local Hoopilot server without proxy variables", () => {
-    const invocation = buildCodexxInvocation(["-m", "gpt-5.5", "hi"], {
+    const invocation = buildCodexxInvocation(["-m", "gpt-4.1", "hi"], {
       ALL_PROXY: "http://proxy.company.example:8080",
       HTTPS_PROXY: "http://proxy.company.example:8080",
       HOOPILOT_API_KEY: "local-key",
@@ -21,7 +21,7 @@ describe("buildCodexxInvocation", () => {
       "-c",
       'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
       "-m",
-      "gpt-5.5",
+      "gpt-4.1",
       "hi",
     ]);
     expect(invocation.env.OPENAI_API_KEY).toBe("local-key");
