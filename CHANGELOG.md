@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.6.0 (2026-06-15)
+
+### Features
+
+- add hoopilot models command (bb613f1)
+
 ## 0.5.8 (2026-06-15)
 
 ### Bug Fixes
