@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.3.1 (2026-06-15)
+
+### Bug Fixes
+
+- harden installer checksum lookup (dcb7118)
+
 ## 0.3.0 (2026-06-15)
 
 ### Features
