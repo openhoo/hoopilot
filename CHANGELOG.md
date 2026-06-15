@@ -1,5 +1,16 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.0 (2026-06-15)
+
+### Bug Fixes
+
+- make self-update download write reliable (0a8d1fd)
+- exclude codexx cli from coverage (a89ddea)
+
+### Features
+
+- add codexx hoopilot wrapper (e106352)
+
 ## 0.4.0 (2026-06-15)
 
 ### Features
