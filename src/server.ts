@@ -3,14 +3,10 @@ import { CopilotClient } from "./copilot";
 import { createHoopilotLogger, noopLogger, shouldCreateLogger } from "./logger";
 import {
   chatCompletionToCompletion,
-  chatCompletionToResponse,
   completionsRequestToChatCompletion,
-  DEFAULT_MODEL,
   fallbackModels,
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
-  responsesRequestToChatCompletion,
-  responsesStreamFromChatStream,
 } from "./openai";
 import type {
   HoopilotLogger,
@@ -204,8 +200,7 @@ async function handleChatCompletions(
   logger: HoopilotLogger,
 ): Promise<Response> {
   const chatRequest = normalizeChatCompletionRequest(await readJson(request));
-  const result = await sendChatCompletions(client, chatRequest, request.signal, logger);
-  const upstream = result.upstream;
+  const upstream = await client.chatCompletions(chatRequest, request.signal);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
@@ -219,13 +214,10 @@ async function handleCompletions(
   logger: HoopilotLogger,
 ): Promise<Response> {
   const body = await readJson(request);
-  const result = await sendChatCompletions(
-    client,
+  const upstream = await client.chatCompletions(
     completionsRequestToChatCompletion(body),
     request.signal,
-    logger,
   );
-  const upstream = result.upstream;
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
@@ -238,99 +230,13 @@ async function handleResponses(
   request: Request,
   logger: HoopilotLogger,
 ): Promise<Response> {
-  const body = await readJson(request);
-  const chatRequest = responsesRequestToChatCompletion(body);
-  const result = await sendChatCompletions(client, chatRequest, request.signal, logger);
-  const upstream = result.upstream;
+  const body = await readJsonText(request);
+  const upstream = await client.responses(body, request.signal);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
-  logUpstreamSuccess(logger, "/chat/completions", upstream.status);
-
-  if (body.stream === true && upstream.body) {
-    return new Response(
-      responsesStreamFromChatStream(upstream.body, {
-        model: result.model,
-      }),
-      {
-        headers: {
-          ...corsHeaders(),
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-          "content-type": "text/event-stream; charset=utf-8",
-        },
-      },
-    );
-  }
-
-  return jsonResponse(chatCompletionToResponse(await upstream.json()));
-}
-
-interface ChatCompletionsResult {
-  model: string;
-  upstream: Response;
-}
-
-async function sendChatCompletions(
-  client: CopilotClient,
-  chatRequest: JsonObject,
-  signal: AbortSignal,
-  logger: HoopilotLogger,
-): Promise<ChatCompletionsResult> {
-  const model = requestModel(chatRequest);
-  const upstream = await client.chatCompletions(chatRequest, signal);
-  if (upstream.ok || isUpstreamAuthStatus(upstream.status)) {
-    return { model, upstream };
-  }
-
-  const text = await upstream.text();
-  if (!shouldRetryWithDefaultModel(upstream.status, text, model)) {
-    return { model, upstream: textResponse(upstream, text) };
-  }
-
-  logger.warn(
-    {
-      event: "copilot.model.fallback",
-      fallbackModel: DEFAULT_MODEL,
-      upstreamPath: "/chat/completions",
-      upstreamStatus: upstream.status,
-    },
-    "retrying chat completion with fallback model",
-  );
-  return {
-    model: DEFAULT_MODEL,
-    upstream: await client.chatCompletions({ ...chatRequest, model: DEFAULT_MODEL }, signal),
-  };
-}
-
-function shouldRetryWithDefaultModel(status: number, text: string, model: string): boolean {
-  if (model === DEFAULT_MODEL || status < 400 || status >= 500) {
-    return false;
-  }
-  const normalized = text.toLowerCase();
-  return (
-    normalized.includes("model") &&
-    (normalized.includes("not supported") ||
-      normalized.includes("unsupported") ||
-      normalized.includes("invalid model"))
-  );
-}
-
-function requestModel(request: JsonObject): string {
-  return typeof request.model === "string" && request.model.trim() ? request.model : DEFAULT_MODEL;
-}
-
-function textResponse(upstream: Response, text: string): Response {
-  const headers = new Headers();
-  const contentType = upstream.headers.get("content-type");
-  if (contentType) {
-    headers.set("content-type", contentType);
-  }
-  return new Response(text, {
-    headers,
-    status: upstream.status,
-    statusText: upstream.statusText,
-  });
+  logUpstreamSuccess(logger, "/responses", upstream.status);
+  return proxyResponse(upstream);
 }
 
 async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<Response> {
@@ -368,6 +274,16 @@ async function readJson(request: Request): Promise<JsonObject> {
   try {
     const value = await request.json();
     return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
+  } catch {
+    throw new Error(INVALID_JSON_MESSAGE);
+  }
+}
+
+async function readJsonText(request: Request): Promise<string> {
+  const text = await request.text();
+  try {
+    JSON.parse(text);
+    return text;
   } catch {
     throw new Error(INVALID_JSON_MESSAGE);
   }

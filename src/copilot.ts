@@ -21,6 +21,17 @@ export class CopilotClient {
     });
   }
 
+  async responses(body: string, signal?: AbortSignal): Promise<Response> {
+    return this.fetchCopilot("/responses", {
+      body,
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+      signal,
+    });
+  }
+
   async models(signal?: AbortSignal): Promise<Response> {
     return this.fetchCopilot("/models", {
       headers: {

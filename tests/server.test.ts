@@ -21,7 +21,7 @@ describe("createHoopilotHandler", () => {
 
     const response = await handler(
       new Request("http://localhost/v1/chat/completions", {
-        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-5.5" }),
+        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
         method: "POST",
       }),
     );
@@ -117,27 +117,34 @@ describe("createHoopilotHandler", () => {
     expect(response.headers.get("x-request-id")).toBeTruthy();
   });
 
-  it("aliases Codex-only Responses API models before calling Copilot", async () => {
+  it("proxies Responses API requests to Copilot Responses without changing model or effort", async () => {
     const upstreamRequests: Request[] = [];
     const handler = createHoopilotHandler(
       oauthOptions(async (input, init) => {
         upstreamRequests.push(new Request(input, init));
         return Response.json({
-          choices: [{ message: { content: "translated", role: "assistant" } }],
-          model: "gpt-4.1",
+          model: "gpt-5.5-2026-04-23",
+          object: "response",
+          output: [{ content: [{ text: "translated", type: "output_text" }], type: "message" }],
+          output_text: "translated",
+          status: "completed",
         });
       }),
     );
 
     const response = await handler(
       new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ input: "hello", model: "gpt-5.5" }),
+        body: JSON.stringify({ input: "hello", model: "gpt-5.5", reasoning: { effort: "xhigh" } }),
         method: "POST",
       }),
     );
 
     expect(response.status).toBe(200);
-    await expect(upstreamRequests[0]!.json()).resolves.toMatchObject({ model: "gpt-4.1" });
+    expect(upstreamRequests[0]!.url).toBe("https://api.githubcopilot.com/responses");
+    await expect(upstreamRequests[0]!.json()).resolves.toMatchObject({
+      model: "gpt-5.5",
+      reasoning: { effort: "xhigh" },
+    });
     await expect(response.json()).resolves.toMatchObject({
       object: "response",
       output_text: "translated",
@@ -145,53 +152,7 @@ describe("createHoopilotHandler", () => {
     });
   });
 
-  it("retries unsupported Copilot model errors with the fallback model", async () => {
-    const logs = captureLogger();
-    const upstreamRequests: Request[] = [];
-    const handler = createHoopilotHandler({
-      ...oauthOptions(async (input, init) => {
-        upstreamRequests.push(new Request(input, init));
-        if (upstreamRequests.length === 1) {
-          return new Response("model is not supported", { status: 400 });
-        }
-        return Response.json({
-          choices: [{ message: { content: "translated", role: "assistant" } }],
-          model: "gpt-4.1",
-        });
-      }),
-      logger: logs.logger,
-    });
-
-    const response = await handler(
-      new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ input: "hello", model: "future-model" }),
-        method: "POST",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(upstreamRequests).toHaveLength(2);
-    await expect(upstreamRequests[0]!.json()).resolves.toMatchObject({ model: "future-model" });
-    await expect(upstreamRequests[1]!.json()).resolves.toMatchObject({ model: "gpt-4.1" });
-    expect(logs.entries).toContainEqual(
-      expect.objectContaining({
-        fields: expect.objectContaining({
-          event: "copilot.model.fallback",
-          fallbackModel: "gpt-4.1",
-          upstreamStatus: 400,
-        }),
-        level: "warn",
-        message: "retrying chat completion with fallback model",
-      }),
-    );
-    await expect(response.json()).resolves.toMatchObject({
-      object: "response",
-      output_text: "translated",
-      status: "completed",
-    });
-  });
-
-  it("does not retry non-model Copilot errors", async () => {
+  it("maps Responses API upstream errors without retrying a different model", async () => {
     const upstreamRequests: Request[] = [];
     const handler = createHoopilotHandler(
       oauthOptions(async (input, init) => {
@@ -202,7 +163,7 @@ describe("createHoopilotHandler", () => {
 
     const response = await handler(
       new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ input: "hello", model: "future-model" }),
+        body: JSON.stringify({ input: "hello", model: "gpt-5.5" }),
         method: "POST",
       }),
     );
@@ -214,39 +175,18 @@ describe("createHoopilotHandler", () => {
     });
   });
 
-  it("serves Responses API requests by translating to chat completions without model aliases", async () => {
-    const handler = createHoopilotHandler(
-      oauthOptions(async () =>
-        Response.json({
-          choices: [{ message: { content: "translated", role: "assistant" } }],
-          model: "gpt-4.1",
-        }),
-      ),
-    );
-
-    const response = await handler(
-      new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ input: "hello", model: "gpt-4.1" }),
-        method: "POST",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      object: "response",
-      output_text: "translated",
-      status: "completed",
-    });
-  });
-
   it("accepts Responses API path aliases", async () => {
+    const upstreamRequests: Request[] = [];
     const handler = createHoopilotHandler(
-      oauthOptions(async () =>
-        Response.json({
-          choices: [{ message: { content: "translated", role: "assistant" } }],
-          model: "gpt-4.1",
-        }),
-      ),
+      oauthOptions(async (input, init) => {
+        upstreamRequests.push(new Request(input, init));
+        return Response.json({
+          model: "gpt-5.5-2026-04-23",
+          object: "response",
+          output_text: "translated",
+          status: "completed",
+        });
+      }),
     );
 
     for (const path of ["/responses", "/v1/responses/"]) {
@@ -258,6 +198,7 @@ describe("createHoopilotHandler", () => {
       );
 
       expect(response.status).toBe(200);
+      expect(upstreamRequests.at(-1)!.url).toBe("https://api.githubcopilot.com/responses");
       await expect(response.json()).resolves.toMatchObject({
         object: "response",
         output_text: "translated",
@@ -286,7 +227,7 @@ describe("createHoopilotHandler", () => {
     const handler = createHoopilotHandler(
       oauthOptions(
         async () =>
-          new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+          new Response('event: response.output_text.delta\ndata: {"delta":"ok"}\n\n', {
             headers: { "content-type": "text/event-stream" },
           }),
       ),

@@ -2,11 +2,6 @@ import type { JsonObject } from "./types";
 
 export const DEFAULT_MODEL = "gpt-4.1";
 
-const MODEL_ALIASES: Record<string, string> = {
-  "gpt-5.5": DEFAULT_MODEL,
-  "gpt-5.5-codex": DEFAULT_MODEL,
-};
-
 interface ResponseStreamOptions {
   model: string;
   responseId?: string;
@@ -68,10 +63,7 @@ export function completionsRequestToChatCompletion(request: JsonObject): JsonObj
 
 export function normalizeRequestedModel(model: unknown): string {
   const requested = contentToText(model).trim();
-  if (!requested) {
-    return DEFAULT_MODEL;
-  }
-  return MODEL_ALIASES[requested.toLowerCase()] ?? requested;
+  return requested || DEFAULT_MODEL;
 }
 
 export function chatCompletionToResponse(completion: JsonObject, responseId?: string): JsonObject {

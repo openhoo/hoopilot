@@ -106,20 +106,20 @@ describe("responsesRequestToChatCompletion", () => {
     expect(chat.response_format).toEqual({ type: "json_object" });
   });
 
-  it("aliases Codex-only models before forwarding to Copilot", () => {
+  it("preserves Responses API model names for upstream Responses routing", () => {
     const chat = responsesRequestToChatCompletion({
       input: "hello",
       model: "gpt-5.5",
     });
 
-    expect(chat.model).toBe("gpt-4.1");
+    expect(chat.model).toBe("gpt-5.5");
   });
 });
 
 describe("normalizeChatCompletionRequest", () => {
-  it("normalizes direct chat completion model names", () => {
+  it("defaults blank direct chat models and preserves explicit model names", () => {
     expect(normalizeChatCompletionRequest({ messages: [], model: "gpt-5.5" })).toMatchObject({
-      model: "gpt-4.1",
+      model: "gpt-5.5",
     });
     expect(
       normalizeChatCompletionRequest({ messages: [], model: "claude-sonnet-4" }),
@@ -132,6 +132,7 @@ describe("normalizeChatCompletionRequest", () => {
 describe("normalizeRequestedModel", () => {
   it("defaults blank models and preserves non-aliased model names", () => {
     expect(normalizeRequestedModel("")).toBe("gpt-4.1");
+    expect(normalizeRequestedModel("gpt-5.5")).toBe("gpt-5.5");
     expect(normalizeRequestedModel("claude-sonnet-4")).toBe("claude-sonnet-4");
   });
 });

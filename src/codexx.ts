@@ -6,6 +6,8 @@ import { constants as osConstants } from "node:os";
 const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
 const DEFAULT_API_KEY = "local-key";
 const DEFAULT_CODEX_BIN = "codex";
+const DEFAULT_MODEL = "gpt-5.5";
+const DEFAULT_REASONING_EFFORT = "xhigh";
 const PROXY_ENV_KEYS = [
   "ALL_PROXY",
   "HTTPS_PROXY",
@@ -31,6 +33,8 @@ export function buildCodexxInvocation(
   const apiKey =
     env.CODEXX_API_KEY ?? env.HOOPILOT_API_KEY ?? env.OPENAI_API_KEY ?? DEFAULT_API_KEY;
   const command = env.CODEXX_CODEX_BIN ?? DEFAULT_CODEX_BIN;
+  const model = env.CODEXX_MODEL ?? DEFAULT_MODEL;
+  const reasoningEffort = env.CODEXX_MODEL_REASONING_EFFORT ?? DEFAULT_REASONING_EFFORT;
   const providerConfig = [
     '{ name = "Hoopilot"',
     `base_url = ${JSON.stringify(baseUrl)}`,
@@ -47,6 +51,10 @@ export function buildCodexxInvocation(
       'model_provider="hoopilot"',
       "-c",
       `model_providers.hoopilot=${providerConfig}`,
+      "-m",
+      model,
+      "-c",
+      `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`,
       ...argv,
     ],
     command,
@@ -106,8 +114,11 @@ Environment:
   HOOPILOT_API_KEY     Used as the API key when CODEXX_API_KEY is unset.
   OPENAI_API_KEY       Used as the API key when both CODEXX_API_KEY and HOOPILOT_API_KEY are unset.
   CODEXX_CODEX_BIN     Codex executable to run. Default: ${DEFAULT_CODEX_BIN}
+  CODEXX_MODEL         Codex model to use. Default: ${DEFAULT_MODEL}
+  CODEXX_MODEL_REASONING_EFFORT
+                       Codex reasoning effort. Default: ${DEFAULT_REASONING_EFFORT}
 
-codexx does not start Hoopilot and does not change your shell environment. It selects a temporary Hoopilot model provider with Responses WebSockets disabled, disables Codex's network_proxy feature, and removes proxy variables only from the spawned Codex process.`;
+codexx does not start Hoopilot and does not change your shell environment. It selects a temporary Hoopilot model provider with Responses WebSockets disabled, uses ${DEFAULT_MODEL} with ${DEFAULT_REASONING_EFFORT} reasoning by default, disables Codex's network_proxy feature, and removes proxy variables only from the spawned Codex process.`;
 }
 
 function signalNumber(signal: NodeJS.Signals): number {

@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { buildCodexxInvocation } from "../src/codexx";
 
 describe("buildCodexxInvocation", () => {
-  it("points Codex at the local Hoopilot server without proxy variables", () => {
-    const invocation = buildCodexxInvocation(["-m", "gpt-4.1", "hi"], {
+  it("points Codex at the local Hoopilot server with gpt-5.5 xhigh defaults", () => {
+    const invocation = buildCodexxInvocation(["hi"], {
       ALL_PROXY: "http://proxy.company.example:8080",
       HTTPS_PROXY: "http://proxy.company.example:8080",
       HOOPILOT_API_KEY: "local-key",
@@ -21,7 +21,9 @@ describe("buildCodexxInvocation", () => {
       "-c",
       'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
       "-m",
-      "gpt-4.1",
+      "gpt-5.5",
+      "-c",
+      'model_reasoning_effort="xhigh"',
       "hi",
     ]);
     expect(invocation.env.OPENAI_API_KEY).toBe("local-key");
@@ -37,6 +39,8 @@ describe("buildCodexxInvocation", () => {
       CODEXX_API_KEY: "override-key",
       CODEXX_BASE_URL: "http://127.0.0.1:5151/v1",
       CODEXX_CODEX_BIN: "/tmp/codex",
+      CODEXX_MODEL: "claude-sonnet-4.6",
+      CODEXX_MODEL_REASONING_EFFORT: "high",
     });
 
     expect(invocation.command).toBe("/tmp/codex");
@@ -47,6 +51,10 @@ describe("buildCodexxInvocation", () => {
       'model_provider="hoopilot"',
       "-c",
       'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:5151/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
+      "-m",
+      "claude-sonnet-4.6",
+      "-c",
+      'model_reasoning_effort="high"',
       "exec",
       "status",
     ]);
