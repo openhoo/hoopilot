@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.6 (2026-06-15)
+
+### Bug Fixes
+
+- fall back from unsupported copilot models (f9d353b)
+
 ## 0.5.5 (2026-06-15)
 
 ### Bug Fixes
