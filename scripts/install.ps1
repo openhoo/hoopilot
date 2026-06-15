@@ -19,8 +19,62 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
 
 $Repo = 'openhoo/hoopilot'
 $Bin = 'hoopilot'
+$CodexxBin = 'codexx'
 $ChecksumAttempts = 12
 $ChecksumRetrySeconds = 5
+
+function Install-CodexxWrapper {
+  param([string]$InstallDir)
+
+  $ps1 = Join-Path $InstallDir "$CodexxBin.ps1"
+  $cmd = Join-Path $InstallDir "$CodexxBin.cmd"
+  @'
+$ErrorActionPreference = 'Stop'
+
+$baseUrl = if ($env:CODEXX_BASE_URL) { $env:CODEXX_BASE_URL } else { 'http://127.0.0.1:4141/v1' }
+$apiKey = if ($env:CODEXX_API_KEY) {
+  $env:CODEXX_API_KEY
+} elseif ($env:HOOPILOT_API_KEY) {
+  $env:HOOPILOT_API_KEY
+} elseif ($env:OPENAI_API_KEY) {
+  $env:OPENAI_API_KEY
+} else {
+  'local-key'
+}
+$codexBin = if ($env:CODEXX_CODEX_BIN) { $env:CODEXX_CODEX_BIN } else { 'codex' }
+
+foreach ($name in @(
+  'ALL_PROXY',
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'NO_PROXY',
+  'all_proxy',
+  'https_proxy',
+  'http_proxy',
+  'no_proxy'
+)) {
+  Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+}
+
+$env:OPENAI_API_KEY = $apiKey
+& $codexBin --disable network_proxy -c "openai_base_url=`"$baseUrl`"" @args
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $ps1 -Encoding UTF8
+
+  @'
+@echo off
+setlocal
+where pwsh >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0codexx.ps1" %*
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0codexx.ps1" %*
+)
+exit /b %ERRORLEVEL%
+'@ | Set-Content -LiteralPath $cmd -Encoding ASCII
+
+  Write-Host "Installed $CodexxBin to $cmd"
+}
 
 function Find-ChecksumLine {
   param(
@@ -121,6 +175,7 @@ try {
 
 Move-Item -Force -Path $tmp -Destination $exe
 Write-Host "Installed $Bin to $exe"
+Install-CodexxWrapper -InstallDir $InstallDir
 
 # --- add InstallDir to the user PATH (writing the registry directly so an
 #     existing REG_EXPAND_SZ value keeps its %VAR% tokens instead of being
@@ -165,4 +220,4 @@ try {
 } catch {
   Write-Warning "Installed, but '$Bin --version' did not run cleanly: $($_.Exception.Message)"
 }
-Write-Host "Run: $Bin --help    (update later with: $Bin update)"
+Write-Host "Run: $Bin --help or $CodexxBin --help    (update later with: $Bin update)"

@@ -10,6 +10,7 @@ set -eu
 
 REPO="openhoo/hoopilot"
 BIN="hoopilot"
+CODEXX_BIN="codexx"
 GITHUB="${GITHUB_BASE_URL:-https://github.com}"
 VERSION="${HOOPILOT_VERSION:-latest}"
 INSTALL_DIR="${HOOPILOT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -21,6 +22,26 @@ err() {
   exit 1
 }
 info() { printf '%s\n' "$*"; }
+
+install_codexx_wrapper() {
+  wrapper="$INSTALL_DIR/$CODEXX_BIN"
+  cat >"$wrapper" <<'EOF'
+#!/bin/sh
+set -eu
+
+base_url="${CODEXX_BASE_URL:-http://127.0.0.1:4141/v1}"
+api_key="${CODEXX_API_KEY:-${HOOPILOT_API_KEY:-${OPENAI_API_KEY:-local-key}}}"
+codex_bin="${CODEXX_CODEX_BIN:-codex}"
+
+unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
+OPENAI_API_KEY="$api_key" exec "$codex_bin" \
+  --disable network_proxy \
+  -c "openai_base_url=\"$base_url\"" \
+  "$@"
+EOF
+  chmod +x "$wrapper" || err "cannot make $wrapper executable"
+  info "Installed $CODEXX_BIN to $wrapper"
+}
 
 # --- args (passed via `sh -s -- ...`) ---
 while [ $# -gt 0 ]; do
@@ -158,6 +179,7 @@ info "Checksum verified."
 chmod +x "$staging" || err "cannot make $staging executable"
 mv -f "$staging" "$INSTALL_DIR/$BIN" || err "cannot install to $INSTALL_DIR/$BIN"
 info "Installed $BIN to $INSTALL_DIR/$BIN"
+install_codexx_wrapper
 
 # --- PATH hint ---
 case ":$PATH:" in
@@ -169,5 +191,5 @@ case ":$PATH:" in
 esac
 
 if "$INSTALL_DIR/$BIN" --version >/dev/null 2>&1; then
-  info "Run: $BIN --help    (update later with: $BIN update)"
+  info "Run: $BIN --help or $CODEXX_BIN --help    (update later with: $BIN update)"
 fi
