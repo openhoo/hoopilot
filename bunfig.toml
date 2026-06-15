@@ -7,4 +7,6 @@ coveragePathIgnorePatterns = [
   "src/generated/**",
   "src/index.ts",
   "src/types.ts",
+  "src/update.ts",
+  "src/version.ts",
 ]

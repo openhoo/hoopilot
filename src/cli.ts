@@ -2,20 +2,32 @@
 
 import { startHoopilotServer } from "./server";
 import type { AuthMode, HoopilotServerOptions } from "./types";
+import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
+import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 interface ParsedArgs extends HoopilotServerOptions {
   help?: boolean;
   version?: boolean;
+  noUpdateCheck?: boolean;
 }
 
 export async function main(argv = Bun.argv.slice(2)): Promise<void> {
+  // Clear any leftover ".old" binary from a prior Windows self-update.
+  cleanupOldBinary();
+
+  const command = argv[0];
+  if (command === "update" || command === "upgrade") {
+    await runUpdate(await getVersion());
+    return;
+  }
+
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(helpText(await packageVersion()));
+    console.log(helpText(await getVersion()));
     return;
   }
   if (args.version) {
-    console.log(await packageVersion());
+    console.log(await getVersion());
     return;
   }
 
@@ -23,6 +35,12 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   console.log(`hoopilot listening on ${started.url}`);
   console.log(`OpenAI base URL: ${started.url}/v1`);
   console.log("Use Ctrl+C to stop.");
+
+  if (!args.noUpdateCheck) {
+    // Non-blocking: prints a notice from the previous check and refreshes the
+    // cache in the background. The running server keeps the refresh alive.
+    void maybeNotifyUpdate(await getVersion(), IS_STANDALONE_BINARY ? "binary" : "npm");
+  }
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -51,6 +69,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--no-gh") {
       args.githubTokenCommand = false;
+      continue;
+    }
+    if (arg === "--no-update-check") {
+      args.noUpdateCheck = true;
       continue;
     }
 
@@ -104,15 +126,6 @@ function parseAuthMode(value: string): AuthMode {
   throw new Error(`Invalid auth mode: ${value}.`);
 }
 
-async function packageVersion(): Promise<string> {
-  try {
-    const manifest = await Bun.file(new URL("../package.json", import.meta.url)).json();
-    return typeof manifest.version === "string" ? manifest.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
 function helpText(version: string): string {
   return `hoopilot ${version}
 
@@ -120,7 +133,12 @@ OpenAI-compatible proxy for GitHub Copilot.
 
 Usage:
   hoopilot [serve] [options]
+  hoopilot update
   npx @openhoo/hoopilot [options]
+
+Commands:
+  serve                             Start the proxy server (default)
+  update, upgrade                   Update hoopilot to the latest release
 
 Options:
   -p, --port <port>                 Port to listen on. Default: 4141
@@ -132,6 +150,7 @@ Options:
       --copilot-token <token>       Short-lived Copilot API bearer token
       --copilot-api-base-url <url>  Copilot API base URL override
       --no-gh                       Do not try gh auth token
+      --no-update-check             Do not check GitHub for a newer release
       --allow-unauthenticated       Allow non-loopback bind without --api-key
   -h, --help                        Show help
   -v, --version                     Show version
@@ -141,6 +160,7 @@ Environment:
   COPILOT_GITHUB_TOKEN
   COPILOT_API_TOKEN, GITHUB_COPILOT_API_TOKEN
   COPILOT_API_BASE_URL
+  HOOPILOT_NO_UPDATE_CHECK          Set to disable update checks (also NO_UPDATE_NOTIFIER)
 `;
 }
 

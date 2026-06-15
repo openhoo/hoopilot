@@ -73,3 +73,16 @@ jobs:
       - name: Publish package to npm
         if: steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
         run: npm publish --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Build standalone binaries
+        if: steps.release.outputs.published == 'true'
+        run: bash scripts/build-binaries.sh "${{ steps.release.outputs.version }}"
+
+      - name: Attach binaries to the GitHub release
+        if: steps.release.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag || format('v{0}', steps.release.outputs.version) }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" dist/bin/hoopilot-* dist/bin/SHA256SUMS --clobber

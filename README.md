@@ -7,16 +7,76 @@ OpenAI-compatible local proxy for GitHub Copilot accounts. It runs on Bun and ex
 
 This project uses GitHub Copilot's service endpoints and is not an official GitHub product. The upstream API can change without notice. Use it only with accounts and usage patterns you are allowed to use.
 
-## Run
+## Install
+
+### npm (recommended when the registry is reachable)
 
 ```sh
 npx @openhoo/hoopilot
 ```
 
-Before the npm package is published, run the same binary directly from GitHub:
+Or install it globally:
 
 ```sh
-npx github:openhoo/hoopilot
+npm install -g @openhoo/hoopilot
+# or
+bun add -g @openhoo/hoopilot
+```
+
+### Standalone binary (no npm, no runtime required)
+
+When the npm registry is unreachable but GitHub is, install a prebuilt,
+self-contained binary straight from the latest GitHub release. No Node.js or Bun
+is needed to run it.
+
+Linux / macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1 | iex
+```
+
+The installer detects your OS, CPU architecture (x64/arm64), and libc (glibc or
+musl), downloads the matching binary, verifies its SHA-256 checksum, and installs
+it to `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\Programs\hoopilot`
+(Windows). Override the location with `HOOPILOT_INSTALL_DIR`, or pin a version:
+
+```sh
+curl -fsSL .../install.sh | sh -s -- --version 0.2.5 --dir ~/bin
+```
+
+```powershell
+& ([scriptblock]::Create((irm .../install.ps1))) -Version 0.2.5
+```
+
+Prebuilt binaries are available for Linux (x64/arm64, glibc and musl), macOS
+(Intel/Apple Silicon), and Windows (x64/arm64).
+
+## Update
+
+Standalone binaries update themselves in place from the latest GitHub release
+(checksum-verified):
+
+```sh
+hoopilot update
+```
+
+npm installs report when a newer version is available and print the right command
+(`npm install -g @openhoo/hoopilot@latest`). Either way, Hoopilot checks GitHub at
+most once a day in the background and prints a one-line notice to stderr when an
+update exists. Disable the check with `--no-update-check`, or by setting
+`HOOPILOT_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER`; it is also skipped in CI and
+when output is not a terminal.
+
+## Run
+
+```sh
+npx @openhoo/hoopilot
 ```
 
 By default Hoopilot listens on `127.0.0.1:4141`, uses `COPILOT_API_TOKEN` when provided, otherwise reads a GitHub CLI OAuth token from `COPILOT_GITHUB_TOKEN` or `gh auth token`, and uses that token with Copilot.
@@ -129,7 +189,7 @@ bun run biome:fix
 
 ## Release
 
-Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, then publishes the package through npm trusted publishing.
+Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, publishes the package through npm trusted publishing, then cross-compiles standalone binaries for every supported platform (`scripts/build-binaries.sh`) and attaches them — plus a `SHA256SUMS` manifest — to the GitHub release. Build all binaries locally with `bun run build:binaries`.
 
 Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com before relying on automatic publication. The workflow uses GitHub Actions OIDC with `npm publish --access public --provenance`.
 
