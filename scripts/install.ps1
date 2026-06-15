@@ -23,6 +23,61 @@ $CodexxBin = 'codexx'
 $ChecksumAttempts = 12
 $ChecksumRetrySeconds = 5
 
+function Get-NormalizedFilePath {
+  param([string]$Path)
+
+  try {
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+  } catch {
+    return $Path
+  }
+}
+
+function Stop-ProcessesUsingFile {
+  param(
+    [string]$Path,
+    [string]$DisplayName
+  )
+
+  $targetPath = Get-NormalizedFilePath -Path $Path
+  $fileName = [System.IO.Path]::GetFileName($Path).Replace("'", "''")
+
+  try {
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = '$fileName'" -ErrorAction Stop)
+  } catch {
+    Write-Warning "Could not inspect running $DisplayName processes: $($_.Exception.Message)"
+    return
+  }
+
+  $matchingProcessIds = @()
+  foreach ($process in $processes) {
+    if (-not $process.ExecutablePath) { continue }
+
+    $processPath = Get-NormalizedFilePath -Path $process.ExecutablePath
+    if ([string]::Equals($processPath, $targetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $matchingProcessIds += [int]$process.ProcessId
+    }
+  }
+
+  if ($matchingProcessIds.Count -eq 0) { return }
+
+  Write-Host "Stopping running $DisplayName process(es): $($matchingProcessIds -join ', ')"
+  foreach ($processId in $matchingProcessIds) {
+    try {
+      Stop-Process -Id $processId -Force -ErrorAction Stop
+    } catch {
+      Write-Warning "Could not stop $DisplayName process $processId`: $($_.Exception.Message)"
+    }
+  }
+
+  foreach ($processId in $matchingProcessIds) {
+    try {
+      Wait-Process -Id $processId -Timeout 10 -ErrorAction SilentlyContinue
+    } catch { }
+  }
+  Start-Sleep -Milliseconds 250
+}
+
 function Move-FileReplacingExisting {
   param(
     [string]$Source,
@@ -34,7 +89,13 @@ function Move-FileReplacingExisting {
     try {
       Remove-Item -LiteralPath $Destination -Force -ErrorAction Stop
     } catch {
-      throw "could not replace existing $DisplayName at $Destination. Close any running $DisplayName process and re-run the installer. $($_.Exception.Message)"
+      $firstError = $_.Exception.Message
+      Stop-ProcessesUsingFile -Path $Destination -DisplayName $DisplayName
+      try {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction Stop
+      } catch {
+        throw "could not replace existing $DisplayName at $Destination. The file may still be running, locked by security software, or require administrator rights for this install directory. Close any running $DisplayName process or rerun PowerShell as Administrator, then run the installer again. First error: $firstError. Last error: $($_.Exception.Message)"
+      }
     }
   }
 
