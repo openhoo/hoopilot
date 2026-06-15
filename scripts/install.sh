@@ -13,6 +13,8 @@ BIN="hoopilot"
 GITHUB="${GITHUB_BASE_URL:-https://github.com}"
 VERSION="${HOOPILOT_VERSION:-latest}"
 INSTALL_DIR="${HOOPILOT_INSTALL_DIR:-$HOME/.local/bin}"
+CHECKSUM_ATTEMPTS="${HOOPILOT_CHECKSUM_ATTEMPTS:-12}"
+CHECKSUM_RETRY_SECONDS="${HOOPILOT_CHECKSUM_RETRY_SECONDS:-5}"
 
 err() {
   printf 'error: %s\n' "$*" >&2
@@ -108,11 +110,36 @@ info "Downloading $asset ($VERSION)..."
 download "$base/$asset" "$staging" || err "download failed: $base/$asset"
 
 # --- verify checksum ---
-download "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
-  err "could not download SHA256SUMS; refusing to install an unverified binary"
+expected=""
+checksum_error="could not download SHA256SUMS; refusing to install an unverified binary"
+attempt=1
+while [ "$attempt" -le "$CHECKSUM_ATTEMPTS" ]; do
+  if download "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
+    expected="$(
+      awk -v asset="$asset" '
+        {
+          name = $2
+          sub(/^\*/, "", name)
+          if (name == asset) {
+            print $1
+            exit
+          }
+        }
+      ' "$tmp/SHA256SUMS"
+    )"
+    if [ -n "$expected" ]; then
+      break
+    fi
+    checksum_error="no checksum for $asset in SHA256SUMS"
+  fi
 
-expected="$(grep " ${asset}\$" "$tmp/SHA256SUMS" 2>/dev/null | awk '{print $1}' | head -n1)"
-[ -n "$expected" ] || err "no checksum for $asset in SHA256SUMS"
+  if [ "$attempt" -lt "$CHECKSUM_ATTEMPTS" ]; then
+    info "Checksum is not ready yet; retrying in ${CHECKSUM_RETRY_SECONDS}s..."
+    sleep "$CHECKSUM_RETRY_SECONDS"
+  fi
+  attempt=$((attempt + 1))
+done
+[ -n "$expected" ] || err "$checksum_error"
 
 if command -v sha256sum >/dev/null 2>&1; then
   actual="$(sha256sum "$staging" | awk '{print $1}')"

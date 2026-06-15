@@ -19,6 +19,62 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
 
 $Repo = 'openhoo/hoopilot'
 $Bin = 'hoopilot'
+$ChecksumAttempts = 12
+$ChecksumRetrySeconds = 5
+
+function Find-ChecksumLine {
+  param(
+    [string]$Sums,
+    [string]$AssetName
+  )
+
+  foreach ($candidate in ([regex]::Split($Sums, '\r?\n'))) {
+    $parts = $candidate.Trim() -split '\s+', 2
+    if ($parts.Count -lt 2) { continue }
+
+    $name = $parts[1].Trim()
+    if ($name.StartsWith('*')) {
+      $name = $name.Substring(1)
+    }
+    if ($name -eq $AssetName) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
+
+function Get-ChecksumLine {
+  param(
+    [string]$BaseUrl,
+    [string]$AssetName
+  )
+
+  $lastError = $null
+  $sumsFile = Join-Path ([System.IO.Path]::GetTempPath()) ("hoopilot-" + [System.Guid]::NewGuid().ToString('N') + '.SHA256SUMS')
+  for ($attempt = 1; $attempt -le $ChecksumAttempts; $attempt++) {
+    try {
+      Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/SHA256SUMS" -OutFile $sumsFile
+      $sums = Get-Content -LiteralPath $sumsFile -Raw -Encoding UTF8
+      $line = Find-ChecksumLine -Sums $sums -AssetName $AssetName
+      if ($line) {
+        Remove-Item -Force $sumsFile -ErrorAction SilentlyContinue
+        return $line
+      }
+      $lastError = "no checksum for $AssetName in SHA256SUMS"
+    } catch {
+      $lastError = "could not download SHA256SUMS: $($_.Exception.Message)"
+    }
+
+    if ($attempt -lt $ChecksumAttempts) {
+      Write-Host "Checksum is not ready yet; retrying in $ChecksumRetrySeconds seconds..."
+      Start-Sleep -Seconds $ChecksumRetrySeconds
+    }
+  }
+
+  Remove-Item -Force $sumsFile -ErrorAction SilentlyContinue
+  throw $lastError
+}
 
 # --- detect arch (registry value is correct even under x64 emulation on ARM64) ---
 $procArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
@@ -51,10 +107,8 @@ try {
 
 # --- verify checksum ---
 try {
-  $sums = (Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS").Content
-  $line = ($sums -split "`n") | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))\s*$" } | Select-Object -First 1
-  if (-not $line) { throw "no checksum for $asset in SHA256SUMS" }
-  $expected = ($line -split '\s+')[0].ToLower()
+  $line = Get-ChecksumLine -BaseUrl $base -AssetName $asset
+  $expected = ($line.Trim() -split '\s+', 2)[0].ToLower()
   $actual = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
   if ($expected -ne $actual) {
     throw "checksum mismatch for $asset (expected $expected, got $actual)"
