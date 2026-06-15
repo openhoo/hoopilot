@@ -141,6 +141,32 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("accepts Responses API path aliases", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () =>
+        Response.json({
+          choices: [{ message: { content: "translated", role: "assistant" } }],
+          model: "gpt-4.1",
+        }),
+      ),
+    );
+
+    for (const path of ["/responses", "/v1/responses/"]) {
+      const response = await handler(
+        new Request(`http://localhost${path}`, {
+          body: JSON.stringify({ input: "hello", model: "gpt-4.1" }),
+          method: "POST",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        object: "response",
+        output_text: "translated",
+      });
+    }
+  });
+
   it("streams Responses API requests", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(

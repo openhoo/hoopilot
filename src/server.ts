@@ -30,12 +30,13 @@ export function createHoopilotHandler(options: HoopilotServerOptions = {}) {
   return async (request: Request): Promise<Response> => {
     const startedAt = performance.now();
     const url = new URL(request.url);
+    const apiPath = canonicalApiPath(url.pathname);
     const requestId = requestIdFor(request);
     const requestLogger = logger.child({
       method: request.method,
       path: url.pathname,
       requestId,
-      route: routeFor(request.method, url.pathname),
+      route: routeFor(request.method, apiPath),
     });
 
     if (request.method === "OPTIONS") {
@@ -59,7 +60,7 @@ export function createHoopilotHandler(options: HoopilotServerOptions = {}) {
     }
 
     try {
-      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/healthz")) {
+      if (request.method === "GET" && (apiPath === "/" || apiPath === "/healthz")) {
         return finishResponse(
           jsonResponse({
             name: "hoopilot",
@@ -69,28 +70,28 @@ export function createHoopilotHandler(options: HoopilotServerOptions = {}) {
           { logger: requestLogger, requestId, startedAt },
         );
       }
-      if (request.method === "GET" && url.pathname === "/v1/models") {
+      if (request.method === "GET" && apiPath === "/v1/models") {
         return finishResponse(await handleModels(client, request.signal, requestLogger), {
           logger: requestLogger,
           requestId,
           startedAt,
         });
       }
-      if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+      if (request.method === "POST" && apiPath === "/v1/chat/completions") {
         return finishResponse(await handleChatCompletions(client, request, requestLogger), {
           logger: requestLogger,
           requestId,
           startedAt,
         });
       }
-      if (request.method === "POST" && url.pathname === "/v1/completions") {
+      if (request.method === "POST" && apiPath === "/v1/completions") {
         return finishResponse(await handleCompletions(client, request, requestLogger), {
           logger: requestLogger,
           requestId,
           startedAt,
         });
       }
-      if (request.method === "POST" && url.pathname === "/v1/responses") {
+      if (request.method === "POST" && apiPath === "/v1/responses") {
         return finishResponse(await handleResponses(client, request, requestLogger), {
           logger: requestLogger,
           requestId,
@@ -400,6 +401,22 @@ function logRequestCompleted(logger: HoopilotLogger, response: Response, started
 function requestIdFor(request: Request): string {
   const existing = request.headers.get("x-request-id")?.trim();
   return existing || crypto.randomUUID();
+}
+
+function canonicalApiPath(path: string): string {
+  const withoutTrailingSlash = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  switch (withoutTrailingSlash) {
+    case "/models":
+      return "/v1/models";
+    case "/chat/completions":
+      return "/v1/chat/completions";
+    case "/completions":
+      return "/v1/completions";
+    case "/responses":
+      return "/v1/responses";
+    default:
+      return withoutTrailingSlash;
+  }
 }
 
 function routeFor(method: string, path: string): string {
