@@ -1,5 +1,12 @@
 # @openhoo/hoopilot Changelog
 
+## 0.4.0 (2026-06-15)
+
+### Features
+
+- use GitHub App OAuth for Copilot login (10b34a4)
+- add structured logging (7447514)
+
 ## 0.3.1 (2026-06-15)
 
 ### Bug Fixes
