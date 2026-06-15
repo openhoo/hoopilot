@@ -108,6 +108,28 @@ One-line PowerShell form:
 $env:OPENAI_API_KEY = "local-key"; codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
+Or use the bundled `codexx` convenience command after Hoopilot is already running:
+
+```powershell
+$env:HOOPILOT_API_KEY = "local-key"
+codexx -m gpt-5.5
+```
+
+Without a global install, run it through npm:
+
+```powershell
+$env:HOOPILOT_API_KEY = "local-key"
+npx --package @openhoo/hoopilot codexx -m gpt-5.5
+```
+
+`codexx` does not start Hoopilot and does not change your shell environment. It only
+runs `codex` with `openai_base_url` pointed at `http://127.0.0.1:4141/v1`, maps
+`HOOPILOT_API_KEY` to `OPENAI_API_KEY` for that child process, passes
+`--disable network_proxy` to Codex, and removes standard proxy variables from the
+spawned Codex process so Codex talks directly to the local server. Override the local
+URL with `CODEXX_BASE_URL`, the local key with `CODEXX_API_KEY`, or the Codex
+executable with `CODEXX_CODEX_BIN`.
+
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
 ## Logging

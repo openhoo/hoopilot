@@ -19,6 +19,7 @@
   "license": "MIT",
   "sideEffects": false,
   "bin": {
+    "codexx": "dist/codexx.js",
     "hoopilot": "dist/cli.js"
   },
   "engines": {
@@ -37,7 +38,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean && tsup src/cli.ts --format esm --sourcemap",
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean && tsup src/cli.ts src/codexx.ts --format esm --sourcemap",
     "build:binaries": "bash scripts/build-binaries.sh",
     "biome:check": "biome ci --error-on-warnings .",
     "biome:fix": "biome check --write .",
