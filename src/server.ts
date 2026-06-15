@@ -91,6 +91,9 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
 async function handleModels(client: CopilotClient, signal: AbortSignal): Promise<Response> {
   const upstream = await client.models(signal);
   if (!upstream.ok) {
+    if (isUpstreamAuthStatus(upstream.status)) {
+      return proxyError(upstream);
+    }
     return jsonResponse({ data: fallbackModels(), object: "list" });
   }
   return jsonResponse(normalizeModelsResponse(await upstream.json()));
@@ -98,6 +101,9 @@ async function handleModels(client: CopilotClient, signal: AbortSignal): Promise
 
 async function handleChatCompletions(client: CopilotClient, request: Request): Promise<Response> {
   const upstream = await client.forwardChatCompletions(await request.text(), request.signal);
+  if (!upstream.ok) {
+    return proxyError(upstream);
+  }
   return proxyResponse(upstream);
 }
 
@@ -142,6 +148,9 @@ async function handleResponses(client: CopilotClient, request: Request): Promise
 
 async function proxyError(upstream: Response): Promise<Response> {
   const text = await upstream.text();
+  if (isUpstreamAuthStatus(upstream.status)) {
+    return jsonError(401, "copilot_auth_error", upstreamAuthMessage(text || upstream.statusText));
+  }
   return jsonError(upstream.status, "copilot_error", text || upstream.statusText);
 }
 
@@ -207,6 +216,14 @@ function isAuthorized(request: Request, apiKey: string | undefined): boolean {
   const authorization = request.headers.get("authorization") ?? "";
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   return bearer === apiKey || request.headers.get("x-api-key") === apiKey;
+}
+
+function isUpstreamAuthStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+function upstreamAuthMessage(message: string): string {
+  return `GitHub Copilot rejected the credential or account access: ${message}`;
 }
 
 function isLoopbackHost(host: string): boolean {

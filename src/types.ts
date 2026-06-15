@@ -1,5 +1,3 @@
-export type AuthMode = "auto" | "copilot-token";
-
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface Logger {
@@ -9,21 +7,16 @@ export interface Logger {
 }
 
 export interface CopilotAuthOptions {
-  authMode?: AuthMode;
+  authStorePath?: string;
   copilotApiBaseUrl?: string;
-  copilotToken?: string;
-  githubToken?: string;
-  githubTokenCommand?: string | false;
-  tokenExchangeUrl?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
-  logger?: Logger;
 }
 
 export interface CopilotAccess {
   apiBaseUrl: string;
   expiresAtMs: number;
-  source: "copilot-token" | "github-token" | "direct-github-token";
+  source: "github-copilot-oauth";
   token: string;
 }
 

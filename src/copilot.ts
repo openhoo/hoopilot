@@ -52,6 +52,7 @@ export class CopilotClient {
     headers.set("editor-version", "Hoopilot/0.1.0");
     headers.set("openai-intent", "conversation-panel");
     headers.set("user-agent", "hoopilot/0.1.0");
+    headers.set("x-github-api-version", "2026-06-01");
 
     return this.#fetch(`${access.apiBaseUrl}${path}`, {
       ...init,

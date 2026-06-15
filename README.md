@@ -9,140 +9,161 @@ This project uses GitHub Copilot's service endpoints and is not an official GitH
 
 ## Install
 
-### npm (recommended when the registry is reachable)
+### npm
 
-```sh
+```powershell
 npx @openhoo/hoopilot
 ```
 
 Or install it globally:
 
-```sh
+```powershell
 npm install -g @openhoo/hoopilot
-# or
 bun add -g @openhoo/hoopilot
 ```
 
-### Standalone binary (no npm, no runtime required)
+### Standalone Binary
 
-When the npm registry is unreachable but GitHub is, install a prebuilt,
-self-contained binary straight from the latest GitHub release. No Node.js or Bun
-is needed to run it.
+When the npm registry is unreachable but GitHub is reachable, install a prebuilt self-contained binary from the latest GitHub release. No Node.js or Bun runtime is needed to run it.
 
-Linux / macOS:
+Linux / macOS from PowerShell:
 
-```sh
+```powershell
 curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh
 ```
 
-Windows (PowerShell):
+Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1 | iex
 ```
 
-The installer detects your OS, CPU architecture (x64/arm64), and libc (glibc or
-musl), downloads the matching binary, verifies its SHA-256 checksum, and installs
-it to `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\Programs\hoopilot`
-(Windows). Override the location with `HOOPILOT_INSTALL_DIR`, or pin a version:
+The installer detects your OS, CPU architecture, and libc, downloads the matching binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin` on Linux/macOS or `%LOCALAPPDATA%\Programs\hoopilot` on Windows. Override the location with `HOOPILOT_INSTALL_DIR`, or pin a version:
 
-```sh
-curl -fsSL .../install.sh | sh -s -- --version 0.2.5 --dir ~/bin
+```powershell
+curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh -s -- --version 0.3.0 --dir ~/bin
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm .../install.ps1))) -Version 0.2.5
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version 0.3.0
 ```
-
-Prebuilt binaries are available for Linux (x64/arm64, glibc and musl), macOS
-(Intel/Apple Silicon), and Windows (x64/arm64).
 
 ## Update
 
-Standalone binaries update themselves in place from the latest GitHub release
-(checksum-verified):
+Standalone binaries update themselves in place from the latest GitHub release:
 
-```sh
+```powershell
 hoopilot update
 ```
 
-npm installs report when a newer version is available and print the right command
-(`npm install -g @openhoo/hoopilot@latest`). Either way, Hoopilot checks GitHub at
-most once a day in the background and prints a one-line notice to stderr when an
-update exists. Disable the check with `--no-update-check`, or by setting
-`HOOPILOT_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER`; it is also skipped in CI and
-when output is not a terminal.
+npm installs report when a newer version is available and print the right command. Hoopilot checks GitHub at most once a day in the background. Disable the check with `--no-update-check`, `HOOPILOT_NO_UPDATE_CHECK`, or `NO_UPDATE_NOTIFIER`.
 
 ## Run
 
-```sh
+First sign in with GitHub Copilot OAuth in your browser:
+
+```powershell
+npx @openhoo/hoopilot login
+```
+
+The login command prints a one-time code, opens `https://github.com/login/device` best-effort, verifies that the returned OAuth token can reach the Copilot API, and stores it in Hoopilot's auth file.
+
+Then start the proxy:
+
+```powershell
 npx @openhoo/hoopilot
 ```
 
-By default Hoopilot listens on `127.0.0.1:4141`, uses `COPILOT_API_TOKEN` when provided, otherwise reads a GitHub CLI OAuth token from `COPILOT_GITHUB_TOKEN` or `gh auth token`, and uses that token with Copilot.
+By default Hoopilot listens on `127.0.0.1:4141` and reads the stored OAuth credential from:
+
+- Linux/macOS: `$HOME/.config/hoopilot/auth.json`
+- Windows: `$env:APPDATA\hoopilot\auth.json`
+
+Override the path with `HOOPILOT_AUTH_FILE` or `--auth-file`.
 
 For a local API key:
 
-```sh
-HOOPILOT_API_KEY=local-key npx @openhoo/hoopilot --port 4141
+```powershell
+$env:HOOPILOT_API_KEY = "local-key"
+npx @openhoo/hoopilot --port 4141
 ```
 
 Point OpenAI-compatible clients at:
 
-```sh
-OPENAI_BASE_URL=http://127.0.0.1:4141/v1
-OPENAI_API_KEY=local-key
+```powershell
+$env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
+$env:OPENAI_API_KEY = "local-key"
 ```
 
 Use with Codex CLI after Hoopilot is running:
 
-```sh
-OPENAI_API_KEY=local-key codex -m claude-sonnet-4.6 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+```powershell
+$env:OPENAI_API_KEY = "local-key"
+codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
+One-line PowerShell form:
+
 ```powershell
-$env:OPENAI_API_KEY="local-key"; codex -m claude-sonnet-4.6 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+$env:OPENAI_API_KEY = "local-key"; codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
 ## Authentication
 
-Preferred options:
+Hoopilot supports one credential flow: GitHub Copilot OAuth browser login.
 
-```sh
-gh auth login
+```powershell
+npx @openhoo/hoopilot login
 npx @openhoo/hoopilot
 ```
 
-or:
+Direct bearer tokens, GitHub CLI token fallback, classic GitHub PATs, and fine-grained GitHub PATs are not supported.
 
-```sh
-COPILOT_GITHUB_TOKEN=$(gh auth token) npx @openhoo/hoopilot
+Supported authentication-related settings:
+
+- `HOOPILOT_AUTH_FILE`: OAuth credential store path.
+- `HOOPILOT_GITHUB_CLIENT_ID`: GitHub OAuth app client ID override.
+- `HOOPILOT_GITHUB_DOMAIN`: GitHub domain override. Default: `github.com`.
+- `COPILOT_API_BASE_URL`: upstream Copilot API base URL override. Default: `https://api.githubcopilot.com`.
+
+## Codex Auth Errors
+
+Hoopilot does not return raw `403` responses to Codex for authentication or Copilot-entitlement failures. Local Hoopilot API-key problems return `401 invalid_api_key`; OAuth credential and upstream Copilot auth failures return `401 copilot_auth_error`.
+
+In PowerShell, verify the browser login and local proxy before retrying Codex:
+
+```powershell
+npx @openhoo/hoopilot login
+$env:HOOPILOT_API_KEY = "local-key"
+npx @openhoo/hoopilot --port 4141
 ```
 
-Personal access tokens are not supported by GitHub Copilot's token exchange or chat endpoints. Hoopilot rejects classic and fine-grained PAT prefixes. Use `gh auth token` for the GitHub CLI OAuth path, or pass a short-lived Copilot bearer token with `COPILOT_API_TOKEN`.
+Then, in another PowerShell session:
 
-Supported credential environment variables:
-
-- `COPILOT_GITHUB_TOKEN` or `GITHUB_COPILOT_GITHUB_TOKEN`: GitHub CLI OAuth token for an account with Copilot access. Personal access tokens are rejected.
-- `COPILOT_API_TOKEN`, `GITHUB_COPILOT_API_TOKEN`, or `GITHUB_COPILOT_TOKEN`: short-lived Copilot API bearer token.
-- `COPILOT_API_BASE_URL`: upstream Copilot API base URL override.
-- `COPILOT_TOKEN_EXCHANGE_URL`: GitHub token exchange endpoint override.
-
-Auth modes:
-
-```sh
-npx @openhoo/hoopilot --auth-mode auto
-npx @openhoo/hoopilot --auth-mode copilot-token
+```powershell
+$env:OPENAI_API_KEY = "local-key"
+Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:OPENAI_API_KEY" } `
+  http://127.0.0.1:4141/v1/models
+codex -m gpt-5.5 -c 'openai_base_url="http://127.0.0.1:4141/v1"'
 ```
 
-`auto` uses a direct Copilot token when one is configured, otherwise it uses GitHub's Copilot token exchange endpoint and falls back to the GitHub CLI OAuth token when the exchange endpoint is unavailable.
+If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` and confirm the GitHub account has active Copilot access.
 
 ## CLI
 
-```sh
+```powershell
 hoopilot [serve] [options]
+hoopilot login [options]
+```
+
+Commands:
+
+```txt
+serve                             Start the proxy server (default)
+login                             Sign in through GitHub OAuth in a browser and verify Copilot access
+update, upgrade                   Update hoopilot to the latest release
 ```
 
 Options:
@@ -151,12 +172,9 @@ Options:
 -p, --port <port>                 Port to listen on. Default: 4141
     --host <host>                 Host to listen on. Default: 127.0.0.1
     --api-key <key>               Require clients to send Authorization: Bearer <key>
-    --auth-mode <mode>            auto, copilot-token
-    --github-token <token>        GitHub CLI OAuth token for a Copilot account. PATs are rejected.
-    --github-token-command <cmd>  Command used to read a GitHub token. Default: gh auth token
-    --copilot-token <token>       Short-lived Copilot API bearer token
+    --auth-file <path>            OAuth credential store path
     --copilot-api-base-url <url>  Copilot API base URL override
-    --no-gh                       Do not try gh auth token
+    --no-update-check             Do not check GitHub for a newer release
     --allow-unauthenticated       Allow non-loopback bind without --api-key
 ```
 
@@ -172,14 +190,14 @@ Options:
 
 ## Development
 
-```sh
+```powershell
 bun install
 bun run check
 ```
 
 Useful scripts:
 
-```sh
+```powershell
 bun run test
 bun run test:coverage
 bun run typecheck
@@ -189,7 +207,7 @@ bun run biome:fix
 
 ## Release
 
-Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, publishes the package through npm trusted publishing, then cross-compiles standalone binaries for every supported platform (`scripts/build-binaries.sh`) and attaches them — plus a `SHA256SUMS` manifest — to the GitHub release. Build all binaries locally with `bun run build:binaries`.
+Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, publishes the package through npm trusted publishing, then cross-compiles standalone binaries for every supported platform (`scripts/build-binaries.sh`) and attaches them plus a `SHA256SUMS` manifest to the GitHub release. Build all binaries locally with `bun run build:binaries`.
 
 Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com before relying on automatic publication. The workflow uses GitHub Actions OIDC with `npm publish --access public --provenance`.
 
