@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.7 (2026-06-15)
+
+### Bug Fixes
+
+- route codexx gpt-5.5 through responses (b3cd1a2)
+
 ## 0.5.6 (2026-06-15)
 
 ### Bug Fixes
