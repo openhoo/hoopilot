@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.5.8 (2026-06-15)
+
+### Bug Fixes
+
+- align copilot oauth login with opencode (26789af)
+
 ## 0.5.7 (2026-06-15)
 
 ### Bug Fixes
