@@ -23,6 +23,28 @@ $CodexxBin = 'codexx'
 $ChecksumAttempts = 12
 $ChecksumRetrySeconds = 5
 
+function Move-FileReplacingExisting {
+  param(
+    [string]$Source,
+    [string]$Destination,
+    [string]$DisplayName
+  )
+
+  if (Test-Path -LiteralPath $Destination) {
+    try {
+      Remove-Item -LiteralPath $Destination -Force -ErrorAction Stop
+    } catch {
+      throw "could not replace existing $DisplayName at $Destination. Close any running $DisplayName process and re-run the installer. $($_.Exception.Message)"
+    }
+  }
+
+  try {
+    Move-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+  } catch {
+    throw "could not install $DisplayName to $Destination. $($_.Exception.Message)"
+  }
+}
+
 function Install-CodexxWrapper {
   param([string]$InstallDir)
 
@@ -59,7 +81,7 @@ foreach ($name in @(
 $env:OPENAI_API_KEY = $apiKey
 & $codexBin --disable network_proxy -c "openai_base_url=`"$baseUrl`"" @args
 exit $LASTEXITCODE
-'@ | Set-Content -LiteralPath $ps1 -Encoding UTF8
+'@ | Set-Content -LiteralPath $ps1 -Encoding UTF8 -Force
 
   @'
 @echo off
@@ -71,7 +93,7 @@ if %ERRORLEVEL% EQU 0 (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0codexx.ps1" %*
 )
 exit /b %ERRORLEVEL%
-'@ | Set-Content -LiteralPath $cmd -Encoding ASCII
+'@ | Set-Content -LiteralPath $cmd -Encoding ASCII -Force
 
   Write-Host "Installed $CodexxBin to $cmd"
 }
@@ -173,7 +195,7 @@ try {
   throw "could not verify checksum: $($_.Exception.Message)"
 }
 
-Move-Item -Force -Path $tmp -Destination $exe
+Move-FileReplacingExisting -Source $tmp -Destination $exe -DisplayName "$Bin.exe"
 Write-Host "Installed $Bin to $exe"
 Install-CodexxWrapper -InstallDir $InstallDir
 

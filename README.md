@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/insta
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version 0.3.0
 ```
 
-The standalone installer also installs a `codexx` wrapper next to `hoopilot`. Re-run the installer if `hoopilot` works but your shell does not recognize `codexx`.
+The standalone installer also installs a `codexx` wrapper next to `hoopilot`. Re-run the installer if `hoopilot` works but your shell does not recognize `codexx`; the installer replaces the existing files in place.
 
 ## Update
 
