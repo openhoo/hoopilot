@@ -125,6 +125,7 @@ $apiKey = if ($env:CODEXX_API_KEY) {
   'local-key'
 }
 $codexBin = if ($env:CODEXX_CODEX_BIN) { $env:CODEXX_CODEX_BIN } else { 'codex' }
+$providerConfig = "{ name = `"Hoopilot`", base_url = `"$baseUrl`", env_key = `"OPENAI_API_KEY`", wire_api = `"responses`", supports_websockets = false }"
 
 foreach ($name in @(
   'ALL_PROXY',
@@ -140,7 +141,7 @@ foreach ($name in @(
 }
 
 $env:OPENAI_API_KEY = $apiKey
-& $codexBin --disable network_proxy -c "openai_base_url=`"$baseUrl`"" @args
+& $codexBin --disable network_proxy -c 'model_provider="hoopilot"' -c "model_providers.hoopilot=$providerConfig" @args
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $ps1 -Encoding UTF8 -Force
 

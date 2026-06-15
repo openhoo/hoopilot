@@ -124,9 +124,10 @@ $env:HOOPILOT_API_KEY = "local-key"
 npx --package @openhoo/hoopilot codexx -m gpt-5.5
 ```
 
-`codexx` does not start Hoopilot and does not change your shell environment. It only
-runs `codex` with `openai_base_url` pointed at `http://127.0.0.1:4141/v1`, maps
-`HOOPILOT_API_KEY` to `OPENAI_API_KEY` for that child process, passes
+`codexx` does not start Hoopilot and does not change your shell environment. It runs
+`codex` with a temporary `hoopilot` model provider pointed at
+`http://127.0.0.1:4141/v1`, disables Codex Responses WebSockets for that provider,
+maps `HOOPILOT_API_KEY` to `OPENAI_API_KEY` for that child process, passes
 `--disable network_proxy` to Codex, and removes standard proxy variables from the
 spawned Codex process so Codex talks directly to the local server. Override the local
 URL with `CODEXX_BASE_URL`, the local key with `CODEXX_API_KEY`, or the Codex

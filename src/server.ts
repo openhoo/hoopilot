@@ -70,6 +70,13 @@ export function createHoopilotHandler(options: HoopilotServerOptions = {}) {
           { logger: requestLogger, requestId, startedAt },
         );
       }
+      if (request.method === "GET" && apiPath === "/v1/responses") {
+        return finishResponse(websocketUnsupportedResponse(), {
+          logger: requestLogger,
+          requestId,
+          startedAt,
+        });
+      }
       if (request.method === "GET" && apiPath === "/v1/models") {
         return finishResponse(await handleModels(client, request.signal, requestLogger), {
           logger: requestLogger,
@@ -314,6 +321,16 @@ function jsonError(status: number, code: string, message: string): Response {
   );
 }
 
+function websocketUnsupportedResponse(): Response {
+  const response = jsonError(
+    426,
+    "websocket_not_supported",
+    "Hoopilot does not support Responses WebSocket transport; retry with HTTP Responses API.",
+  );
+  response.headers.set("upgrade", "websocket");
+  return response;
+}
+
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-headers": "authorization, content-type, x-api-key",
@@ -437,6 +454,9 @@ function routeFor(method: string, path: string): string {
   }
   if (method === "POST" && path === "/v1/responses") {
     return "responses";
+  }
+  if (method === "GET" && path === "/v1/responses") {
+    return "responses_websocket";
   }
   return "not_found";
 }

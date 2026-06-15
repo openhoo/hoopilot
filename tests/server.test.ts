@@ -167,6 +167,23 @@ describe("createHoopilotHandler", () => {
     }
   });
 
+  it("tells Codex to fall back when Responses WebSocket is probed", async () => {
+    const handler = createHoopilotHandler({
+      env: {},
+      fetch: unusedFetch,
+    });
+
+    for (const path of ["/responses", "/v1/responses", "/v1/responses/"]) {
+      const response = await handler(new Request(`http://localhost${path}`));
+
+      expect(response.status).toBe(426);
+      expect(response.headers.get("upgrade")).toBe("websocket");
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "websocket_not_supported" },
+      });
+    }
+  });
+
   it("streams Responses API requests", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(

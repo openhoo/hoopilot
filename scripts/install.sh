@@ -32,11 +32,13 @@ set -eu
 base_url="${CODEXX_BASE_URL:-http://127.0.0.1:4141/v1}"
 api_key="${CODEXX_API_KEY:-${HOOPILOT_API_KEY:-${OPENAI_API_KEY:-local-key}}}"
 codex_bin="${CODEXX_CODEX_BIN:-codex}"
+provider_config="{ name = \"Hoopilot\", base_url = \"$base_url\", env_key = \"OPENAI_API_KEY\", wire_api = \"responses\", supports_websockets = false }"
 
 unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
 OPENAI_API_KEY="$api_key" exec "$codex_bin" \
   --disable network_proxy \
-  -c "openai_base_url=\"$base_url\"" \
+  -c 'model_provider="hoopilot"' \
+  -c "model_providers.hoopilot=$provider_config" \
   "$@"
 EOF
   chmod +x "$wrapper" || err "cannot make $wrapper executable"

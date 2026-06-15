@@ -31,13 +31,22 @@ export function buildCodexxInvocation(
   const apiKey =
     env.CODEXX_API_KEY ?? env.HOOPILOT_API_KEY ?? env.OPENAI_API_KEY ?? DEFAULT_API_KEY;
   const command = env.CODEXX_CODEX_BIN ?? DEFAULT_CODEX_BIN;
+  const providerConfig = [
+    '{ name = "Hoopilot"',
+    `base_url = ${JSON.stringify(baseUrl)}`,
+    'env_key = "OPENAI_API_KEY"',
+    'wire_api = "responses"',
+    "supports_websockets = false }",
+  ].join(", ");
 
   return {
     args: [
       "--disable",
       "network_proxy",
       "-c",
-      `openai_base_url=${JSON.stringify(baseUrl)}`,
+      'model_provider="hoopilot"',
+      "-c",
+      `model_providers.hoopilot=${providerConfig}`,
       ...argv,
     ],
     command,
@@ -98,7 +107,7 @@ Environment:
   OPENAI_API_KEY       Used as the API key when both CODEXX_API_KEY and HOOPILOT_API_KEY are unset.
   CODEXX_CODEX_BIN     Codex executable to run. Default: ${DEFAULT_CODEX_BIN}
 
-codexx does not start Hoopilot and does not change your shell environment. It disables Codex's network_proxy feature and removes proxy variables only from the spawned Codex process.`;
+codexx does not start Hoopilot and does not change your shell environment. It selects a temporary Hoopilot model provider with Responses WebSockets disabled, disables Codex's network_proxy feature, and removes proxy variables only from the spawned Codex process.`;
 }
 
 function signalNumber(signal: NodeJS.Signals): number {
