@@ -2,8 +2,8 @@
 // Everything here is side-effect free so it can be unit tested without network
 // or filesystem access; the I/O orchestration lives in update.ts.
 
-export const REPO_OWNER = "openhoo";
-export const REPO_NAME = "hoopilot";
+const REPO_OWNER = "openhoo";
+const REPO_NAME = "hoopilot";
 export const REPO = `${REPO_OWNER}/${REPO_NAME}`;
 export const NPM_PACKAGE = "@openhoo/hoopilot";
 

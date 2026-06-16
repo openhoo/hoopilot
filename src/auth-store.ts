@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface StoredCopilotAuth {
@@ -45,18 +45,19 @@ export function readStoredCopilotAuth(path = authStorePath()): StoredCopilotAuth
 
 export function writeStoredCopilotAuth(auth: StoredCopilotAuth, path = authStorePath()): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(
-    path,
-    `${JSON.stringify(
-      {
-        ...auth,
-        createdAt: auth.createdAt ?? new Date().toISOString(),
-      },
-      null,
-      2,
-    )}\n`,
-    { mode: 0o600 },
-  );
+  const data = `${JSON.stringify(
+    {
+      ...auth,
+      createdAt: auth.createdAt ?? new Date().toISOString(),
+    },
+    null,
+    2,
+  )}\n`;
+  // Write to a sibling temp file, then rename into place so a crash or full
+  // disk mid-write can never leave a truncated credential file behind.
+  const tmpPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmpPath, data, { mode: 0o600 });
+  renameSync(tmpPath, path);
   try {
     chmodSync(path, 0o600);
   } catch {

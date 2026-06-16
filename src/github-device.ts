@@ -1,10 +1,12 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FetchLike, Logger } from "./types";
+import { truncatedResponseText } from "./util";
 
 export const DEFAULT_GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
 const DEFAULT_GITHUB_DOMAIN = "github.com";
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const POLLING_SAFETY_MARGIN_MS = 3_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export interface GithubCopilotDeviceLoginOptions {
   clientId?: string;
@@ -85,15 +87,19 @@ async function requestDeviceCode(
     }),
     headers: oauthHeaders(),
     method: "POST",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(
-      `GitHub device authorization failed with ${response.status}: ${await safeResponseText(
+      `GitHub device authorization failed with ${response.status}: ${await truncatedResponseText(
         response,
       )}`,
     );
   }
-  return (await response.json()) as DeviceCodeResponse;
+  return parseJsonResponse<DeviceCodeResponse>(
+    response,
+    "GitHub device authorization response was not valid JSON",
+  );
 }
 
 async function pollForAccessToken(
@@ -116,17 +122,21 @@ async function pollForAccessToken(
       }),
       headers: oauthHeaders(),
       method: "POST",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
       throw new Error(
-        `GitHub device token exchange failed with ${response.status}: ${await safeResponseText(
+        `GitHub device token exchange failed with ${response.status}: ${await truncatedResponseText(
           response,
         )}`,
       );
     }
 
-    const data = (await response.json()) as DeviceTokenResponse;
+    const data = await parseJsonResponse<DeviceTokenResponse>(
+      response,
+      "GitHub device token response was not valid JSON",
+    );
     if (data.access_token) {
       return data.access_token;
     }
@@ -169,7 +179,11 @@ function positiveSeconds(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-async function safeResponseText(response: Response): Promise<string> {
+async function parseJsonResponse<T>(response: Response, context: string): Promise<T> {
   const text = await response.text();
-  return text.slice(0, 500);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${context}: ${text.slice(0, 500)}`);
+  }
 }

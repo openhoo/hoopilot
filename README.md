@@ -97,20 +97,7 @@ $env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
 $env:OPENAI_API_KEY = "local-key"
 ```
 
-Use with Codex CLI after Hoopilot is running:
-
-```powershell
-$env:OPENAI_API_KEY = "local-key"
-codex -m gpt-5.5 -c 'model_reasoning_effort="xhigh"' -c 'openai_base_url="http://127.0.0.1:4141/v1"'
-```
-
-One-line PowerShell form:
-
-```powershell
-$env:OPENAI_API_KEY = "local-key"; codex -m gpt-5.5 -c 'model_reasoning_effort="xhigh"' -c 'openai_base_url="http://127.0.0.1:4141/v1"'
-```
-
-Or use the bundled `codexx` convenience command after Hoopilot is already running:
+Use with Codex CLI after Hoopilot is running, via the bundled `codexx` command. It runs Codex against the local server with the right model provider — selecting `gpt-5.5` over Copilot's Responses API, which a plain `openai_base_url` override does not configure (see the note below):
 
 ```powershell
 $env:HOOPILOT_API_KEY = "local-key"
@@ -203,7 +190,7 @@ Then, in another PowerShell session:
 $env:OPENAI_API_KEY = "local-key"
 Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:OPENAI_API_KEY" } `
   http://127.0.0.1:4141/v1/models
-codex -m gpt-5.5 -c 'model_reasoning_effort="xhigh"' -c 'openai_base_url="http://127.0.0.1:4141/v1"'
+codexx
 ```
 
 If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` and confirm the GitHub account has active Copilot access.
@@ -230,7 +217,7 @@ Options:
 ```txt
 -p, --port <port>                 Port to listen on. Default: 4141
     --host <host>                 Host to listen on. Default: 127.0.0.1
-    --api-key <key>               Require clients to send Authorization: Bearer <key>
+    --api-key <key>               Require clients to send Authorization: Bearer <key> or x-api-key: <key>
     --auth-file <path>            OAuth credential store path
     --copilot-api-base-url <url>  Copilot API base URL override
     --log-level <level>           trace, debug, info, warn, error, fatal, or silent

@@ -1,7 +1,8 @@
 import { readStoredCopilotAuth } from "./auth-store";
 import type { CopilotAccess, CopilotAuthOptions } from "./types";
+import { trimTrailingSlash } from "./util";
 
-const DEFAULT_COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
+export const DEFAULT_COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 const REFRESH_SKEW_MS = 60_000;
 const STORED_TOKEN_TTL_MS = 10 * 60_000;
 
@@ -50,8 +51,4 @@ export class CopilotAuth {
     this.#cachedAccess = access;
     return access;
   }
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
 }

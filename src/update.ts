@@ -14,6 +14,7 @@ import {
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { errorDetails } from "./logger";
 import type { HoopilotLogger } from "./types";
 import {
   assetNameFor,
@@ -394,15 +395,4 @@ export async function runUpdate(currentVersion: string, logger?: HoopilotLogger)
   if (process.platform === "win32") {
     console.log("Restart hoopilot to run the new version.");
   }
-}
-
-function errorDetails(error: unknown): Record<string, unknown> {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      name: error.name,
-      stack: error.stack,
-    };
-  }
-  return { message: String(error) };
 }

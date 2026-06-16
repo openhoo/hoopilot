@@ -1,4 +1,5 @@
 import type { JsonObject } from "./types";
+import { asRecord } from "./util";
 
 export const DEFAULT_MODEL = "gpt-4.1";
 
@@ -203,18 +204,21 @@ export function responsesStreamFromChatStream(
           const lines = buffer.split(/\r?\n/);
           buffer = lines.pop() ?? "";
           for (const line of lines) {
-            processChatSseLine(line, enqueue, tools, (delta) => {
+            processChatSseLine(messageId, line, enqueue, tools, (delta) => {
               text += delta;
             });
           }
         }
         if (buffer) {
-          processChatSseLine(buffer, enqueue, tools, (delta) => {
+          processChatSseLine(messageId, buffer, enqueue, tools, (delta) => {
             text += delta;
           });
         }
 
-        const output = streamOutputItems(messageId, text, [...tools.values()]);
+        // Build the output items once so the ids emitted in the per-tool stream
+        // events match the ids embedded in the final response.completed payload.
+        const toolItems = [...tools.values()].map(functionCallItem);
+        const output = [messageOutputItem(text, messageId), ...toolItems];
         enqueue("response.output_text.done", {
           content_index: 0,
           item_id: messageId,
@@ -239,8 +243,7 @@ export function responsesStreamFromChatStream(
           type: "response.output_item.done",
         });
 
-        tools.forEach((tool, index) => {
-          const item = functionCallItem(tool);
+        toolItems.forEach((item, index) => {
           const outputIndex = index + 1;
           enqueue("response.output_item.added", {
             item,
@@ -248,7 +251,7 @@ export function responsesStreamFromChatStream(
             type: "response.output_item.added",
           });
           enqueue("response.function_call_arguments.done", {
-            arguments: tool.arguments,
+            arguments: item.arguments,
             item_id: item.id,
             output_index: outputIndex,
             type: "response.function_call_arguments.done",
@@ -267,6 +270,8 @@ export function responsesStreamFromChatStream(
         enqueue("done", "[DONE]");
         controller.close();
       } catch (error) {
+        // Tear down the upstream body so an output-side error/abort cannot leak it.
+        await reader.cancel(error).catch(() => {});
         controller.error(error);
       } finally {
         reader.releaseLock();
@@ -501,6 +506,7 @@ function firstChoice(completion: JsonObject): Record<string, unknown> {
 }
 
 function processChatSseLine(
+  messageId: string,
   line: string,
   enqueue: (event: string, data: JsonObject | "[DONE]") => void,
   tools: Map<number, AccumulatedToolCall>,
@@ -527,7 +533,7 @@ function processChatSseLine(
     enqueue("response.output_text.delta", {
       content_index: 0,
       delta: content,
-      item_id: "",
+      item_id: messageId,
       output_index: 0,
       type: "response.output_text.delta",
     });
@@ -549,14 +555,6 @@ function processChatSseLine(
     existing.arguments += contentToText(fn.arguments);
     tools.set(index, existing);
   }
-}
-
-function streamOutputItems(
-  messageId: string,
-  text: string,
-  tools: AccumulatedToolCall[],
-): JsonObject[] {
-  return [messageOutputItem(text, messageId), ...tools.map((tool) => functionCallItem(tool))];
 }
 
 function baseStreamResponse(
@@ -603,10 +601,6 @@ function parseJson(data: string): JsonObject | undefined {
 
 function removeUndefined(record: JsonObject): JsonObject {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
-}
-
-function asRecord(value: unknown): JsonObject {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
 }
 
 function randomId(): string {

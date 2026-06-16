@@ -268,6 +268,28 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("streams legacy completions instead of failing on the SSE body", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(
+        async () =>
+          new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n', {
+            headers: { "content-type": "text/event-stream" },
+          }),
+      ),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: "hello", stream: true }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await expect(response.text()).resolves.toContain('"content":"hi"');
+  });
+
   it("maps upstream non-auth errors to OpenAI-style errors", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("rate limited", { status: 429 })),

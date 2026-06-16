@@ -1,6 +1,6 @@
 import { CopilotAuthError } from "./auth";
 import { CopilotClient } from "./copilot";
-import { createHoopilotLogger, noopLogger, shouldCreateLogger } from "./logger";
+import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
   chatCompletionToCompletion,
   completionsRequestToChatCompletion,
@@ -15,12 +15,15 @@ import type {
   LogFields,
   StartedHoopilotServer,
 } from "./types";
+import { asRecord } from "./util";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
 
-export function createHoopilotHandler(options: HoopilotServerOptions = {}) {
+export function createHoopilotHandler(
+  options: HoopilotServerOptions = {},
+): (request: Request) => Promise<Response> {
   const client = new CopilotClient(options);
   const apiKey = options.apiKey ?? options.env?.HOOPILOT_API_KEY;
   const logger = serverLogger(options);
@@ -222,6 +225,11 @@ async function handleCompletions(
     return proxyError(upstream, logger);
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
+  // A streaming request yields an SSE body; calling .json() on it would throw a
+  // 500. Pass the stream straight through and only convert non-streaming bodies.
+  if (isStreamingResponse(upstream)) {
+    return proxyResponse(upstream);
+  }
   return jsonResponse(chatCompletionToCompletion(await upstream.json()));
 }
 
@@ -272,8 +280,7 @@ function proxyResponse(upstream: Response): Response {
 
 async function readJson(request: Request): Promise<JsonObject> {
   try {
-    const value = await request.json();
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
+    return asRecord(await request.json());
   } catch {
     throw new Error(INVALID_JSON_MESSAGE);
   }
@@ -465,15 +472,4 @@ function logUpstreamSuccess(logger: HoopilotLogger, upstreamPath: string, status
     },
     "copilot upstream request completed",
   );
-}
-
-function errorDetails(error: unknown): LogFields {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      name: error.name,
-      stack: error.stack,
-    };
-  }
-  return { message: String(error) };
 }

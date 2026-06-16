@@ -1,6 +1,12 @@
 import pino from "pino";
 import pretty from "pino-pretty";
-import type { HoopilotLogger, HoopilotLoggerOptions, LogFormat, LogLevel } from "./types";
+import type {
+  HoopilotLogger,
+  HoopilotLoggerOptions,
+  LogFields,
+  LogFormat,
+  LogLevel,
+} from "./types";
 
 export const DEFAULT_LOG_FORMAT: LogFormat = "pretty";
 export const DEFAULT_LOG_LEVEL: LogLevel = "info";
@@ -109,6 +115,18 @@ export function shouldCreateLogger(options: {
       options.env?.HOOPILOT_LOG_FORMAT ||
       options.env?.HOOPILOT_LOG_LEVEL,
   );
+}
+
+/** Build structured log fields describing an error, for the `err` log key. */
+export function errorDetails(error: unknown): LogFields {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
 }
 
 function isLogFormat(value: string): value is LogFormat {

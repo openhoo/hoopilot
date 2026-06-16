@@ -192,7 +192,7 @@ function errorMessage(error: unknown): string {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(errorMessage(error));
     process.exit(1);
   });
 }

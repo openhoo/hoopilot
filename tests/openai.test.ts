@@ -254,6 +254,55 @@ describe("responsesStreamFromChatStream", () => {
     expect(text).toContain("data: [DONE]");
   });
 
+  it("correlates text deltas to the message item via a non-empty item_id", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const events = parseSseEvents(
+      await new Response(
+        responsesStreamFromChatStream(source, { model: "gpt-4.1", responseId: "resp_test" }),
+      ).text(),
+    );
+    const delta = events.find((e) => e.event === "response.output_text.delta");
+    const messageItem = events.find((e) => e.event === "response.output_item.added");
+
+    expect(delta?.data.item_id).toMatch(/^msg_/);
+    expect(delta?.data.item_id).toBe(messageItem?.data.item?.id);
+  });
+
+  it("keeps function-call ids consistent between stream events and response.completed", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"save","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const events = parseSseEvents(
+      await new Response(
+        responsesStreamFromChatStream(source, { model: "gpt-4.1", responseId: "resp_test" }),
+      ).text(),
+    );
+    const argsDone = events.find((e) => e.event === "response.function_call_arguments.done");
+    const completed = events.find((e) => e.event === "response.completed");
+    const fnItem = completed?.data.response?.output.find((item) => item.type === "function_call");
+
+    expect(fnItem?.id).toMatch(/^fc_/);
+    expect(argsDone?.data.item_id).toBe(fnItem?.id);
+  });
+
   it("translates streamed tool calls", async () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -278,3 +327,32 @@ describe("responsesStreamFromChatStream", () => {
     expect(text).toContain('"{\\"x\\":1}"');
   });
 });
+
+interface ParsedSseEvent {
+  event: string;
+  data: {
+    item_id?: string;
+    item?: { id: string };
+    response?: { output: Array<{ id: string; type: string }> };
+  };
+}
+
+function parseSseEvents(text: string): ParsedSseEvent[] {
+  const events: ParsedSseEvent[] = [];
+  for (const block of text.split("\n\n")) {
+    let event = "";
+    let dataRaw = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event: ")) {
+        event = line.slice("event: ".length);
+      } else if (line.startsWith("data: ")) {
+        dataRaw = line.slice("data: ".length);
+      }
+    }
+    if (!dataRaw || dataRaw === "[DONE]") {
+      continue;
+    }
+    events.push({ data: JSON.parse(dataRaw), event });
+  }
+  return events;
+}

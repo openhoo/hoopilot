@@ -1,17 +1,16 @@
 #!/usr/bin/env bun
 
 import { spawn } from "node:child_process";
-import { CopilotAuthError } from "./auth";
+import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
-import { CopilotClient } from "./copilot";
+import { applyCopilotHeaders, CopilotClient } from "./copilot";
 import { githubCopilotDeviceLogin } from "./github-device";
 import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
 import { startHoopilotServer } from "./server";
-import type { CopilotAccess, FetchLike, HoopilotServerOptions } from "./types";
+import type { CopilotAccess, FetchLike, HoopilotLogger, HoopilotServerOptions } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
+import { asRecord, trimTrailingSlash, truncatedResponseText } from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
-
-const DEFAULT_COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 
 interface ParsedArgs extends HoopilotServerOptions {
   help?: boolean;
@@ -36,11 +35,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
       console.log(helpText(await getVersion()));
       return;
     }
-    const logger = createHoopilotLogger({
-      env: args.env,
-      format: args.logFormat,
-      level: args.logLevel,
-    }).child({ component: "cli", command });
+    const logger = commandLogger(args, command);
     await runUpdate(await getVersion(), logger);
     return;
   }
@@ -50,11 +45,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
       console.log(helpText(await getVersion()));
       return;
     }
-    args.logger = createHoopilotLogger({
-      env: args.env,
-      format: args.logFormat,
-      level: args.logLevel,
-    }).child({ component: "cli", command: "login" });
+    args.logger = commandLogger(args, "login");
     await runLogin(args);
     return;
   }
@@ -64,11 +55,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
       console.log(helpText(await getVersion()));
       return;
     }
-    args.logger = createHoopilotLogger({
-      env: args.env,
-      format: args.logFormat,
-      level: args.logLevel,
-    }).child({ component: "cli", command: "models" });
+    args.logger = commandLogger(args, "models");
     await runModels(args);
     return;
   }
@@ -83,11 +70,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     return;
   }
 
-  const logger = createHoopilotLogger({
-    env: args.env,
-    format: args.logFormat,
-    level: args.logLevel,
-  }).child({ component: "cli", command: "serve" });
+  const logger = commandLogger(args, "serve");
   args.logger = logger;
   const started = startHoopilotServer(args);
   logger.info(
@@ -99,9 +82,11 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     "hoopilot server started",
   );
 
-  if (!args.noUpdateCheck && process.env.HOOPILOT_NO_UPDATE_CHECK !== "1") {
+  if (!args.noUpdateCheck) {
     // Non-blocking: prints a notice from the previous check and refreshes the
     // cache in the background. The running server keeps the refresh alive.
+    // Env-based disabling (HOOPILOT_NO_UPDATE_CHECK, NO_UPDATE_NOTIFIER, CI, …)
+    // is handled centrally by isUpdateCheckDisabled inside maybeNotifyUpdate.
     void maybeNotifyUpdate(
       await getVersion(),
       IS_STANDALONE_BINARY ? "binary" : "npm",
@@ -218,7 +203,7 @@ export async function runModels(options: HoopilotServerOptions = {}): Promise<st
   if (!response.ok) {
     const message = `GitHub Copilot API model list failed with ${
       response.status
-    }: ${await safeResponseText(response)}`;
+    }: ${await truncatedResponseText(response)}`;
     if (response.status === 401 || response.status === 403) {
       throw new CopilotAuthError(message);
     }
@@ -249,14 +234,14 @@ export async function verifyCopilotOAuthToken(
   );
   const fetcher = options.fetch ?? fetch;
   const response = await fetcher(`${apiBaseUrl}/models`, {
-    headers: copilotHeaders(token),
+    headers: applyCopilotHeaders(new Headers(), token),
     method: "GET",
   });
 
   if (!response.ok) {
     const message = `GitHub Copilot API verification failed with ${
       response.status
-    }: ${await safeResponseText(response)}`;
+    }: ${await truncatedResponseText(response)}`;
     if (response.status === 401 || response.status === 403) {
       throw new CopilotAuthError(message);
     }
@@ -286,28 +271,6 @@ function openBrowserBestEffort(url: string): void {
   }
 }
 
-function copilotHeaders(token: string): Headers {
-  const headers = new Headers();
-  headers.set("accept", "application/json");
-  headers.set("authorization", `Bearer ${token}`);
-  headers.set("copilot-integration-id", "vscode-chat");
-  headers.set("editor-plugin-version", "hoopilot/0.1.0");
-  headers.set("editor-version", "Hoopilot/0.1.0");
-  headers.set("openai-intent", "conversation-panel");
-  headers.set("user-agent", "hoopilot/0.1.0");
-  headers.set("x-github-api-version", "2026-06-01");
-  return headers;
-}
-
-async function safeResponseText(response: Response): Promise<string> {
-  const text = await response.text();
-  return text.slice(0, 500);
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
 function modelIdsFromResponse(body: unknown): string[] {
   const record = asRecord(body);
   const data = Array.isArray(record.data) ? record.data : Array.isArray(body) ? body : [];
@@ -324,14 +287,16 @@ function modelIdsFromResponse(body: unknown): string[] {
   return ids;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function withRuntimeEnv(args: ParsedArgs): ParsedArgs {
   return { ...args, env: process.env };
+}
+
+function commandLogger(args: ParsedArgs, command: string): HoopilotLogger {
+  return createHoopilotLogger({
+    env: args.env,
+    format: args.logFormat,
+    level: args.logLevel,
+  }).child({ command, component: "cli" });
 }
 
 function helpText(version: string): string {
@@ -355,7 +320,7 @@ Commands:
 Options:
   -p, --port <port>                 Port to listen on. Default: 4141
       --host <host>                 Host to listen on. Default: 127.0.0.1
-      --api-key <key>               Require clients to send Authorization: Bearer <key>
+      --api-key <key>               Require clients to send Authorization: Bearer <key> or x-api-key: <key>
       --auth-file <path>            OAuth credential store path
       --copilot-api-base-url <url>  Copilot API base URL override
       --log-level <level>           trace, debug, info, warn, error, fatal, or silent

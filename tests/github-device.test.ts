@@ -165,6 +165,24 @@ describe("githubCopilotDeviceLogin", () => {
     ).rejects.toThrow("verification code was not accepted");
   });
 
+  it("reports a clear error when device authorization returns non-JSON", async () => {
+    await expect(
+      githubCopilotDeviceLogin({
+        fetch: async () => new Response("<html>not json</html>", { status: 200 }),
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("GitHub device authorization response was not valid JSON");
+  });
+
+  it("reports a clear error when token polling returns non-JSON", async () => {
+    await expect(
+      githubCopilotDeviceLogin({
+        fetch: pollFetch(new Response("<html>not json</html>", { status: 200 })),
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("GitHub device token response was not valid JSON");
+  });
+
   it("times out while waiting for GitHub device authorization", async () => {
     await expect(
       githubCopilotDeviceLogin({
