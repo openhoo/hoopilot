@@ -1,25 +1,39 @@
 import { CopilotAuthError } from "./auth";
-import { CopilotClient } from "./copilot";
+import { CopilotClient, normalizeCopilotUsage } from "./copilot";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
+import { MetricsRegistry, observeResponseUsage, PROMETHEUS_CONTENT_TYPE } from "./metrics";
 import {
   chatCompletionToCompletion,
   completionsRequestToChatCompletion,
+  extractTokenUsage,
   fallbackModels,
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
+  normalizeRequestedModel,
 } from "./openai";
 import type {
+  CopilotUsage,
   HoopilotLogger,
   HoopilotServerOptions,
   JsonObject,
   LogFields,
   StartedHoopilotServer,
+  TokenUsage,
 } from "./types";
 import { asRecord } from "./util";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
+const USAGE_CACHE_TTL_MS = 60_000;
+
+interface UsageReadResult {
+  copilot?: CopilotUsage;
+  error?: string;
+}
+
+type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
+type TokenRecorder = (model: string, usage: TokenUsage) => void;
 
 export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
@@ -27,100 +41,79 @@ export function createHoopilotHandler(
   const client = new CopilotClient(options);
   const apiKey = options.apiKey ?? options.env?.HOOPILOT_API_KEY;
   const logger = serverLogger(options);
+  const metrics = options.metrics ?? new MetricsRegistry();
+  const readUsage = createUsageReader(client, metrics);
+  const recordTokens: TokenRecorder = (model, usage) => metrics.recordTokens(model, usage);
 
   return async (request: Request): Promise<Response> => {
     const startedAt = performance.now();
     const url = new URL(request.url);
     const apiPath = canonicalApiPath(url.pathname);
     const requestId = requestIdFor(request);
+    const route = routeFor(request.method, apiPath);
     const requestLogger = logger.child({
       method: request.method,
       path: url.pathname,
       requestId,
-      route: routeFor(request.method, apiPath),
+      route,
     });
-
-    if (request.method === "OPTIONS") {
-      return finishResponse(new Response(null, { headers: corsHeaders() }), {
+    metrics.startRequest();
+    const finish = (response: Response): Response =>
+      finishResponse(response, {
         logger: requestLogger,
+        method: request.method,
+        metrics,
         requestId,
+        route,
         startedAt,
       });
+
+    if (request.method === "OPTIONS") {
+      return finish(new Response(null, { headers: corsHeaders() }));
     }
 
     if (!isAuthorized(request, apiKey)) {
       requestLogger.warn({ event: "http.request.unauthorized" }, "invalid hoopilot api key");
-      return finishResponse(
-        jsonError(401, "invalid_api_key", "Invalid or missing Hoopilot API key."),
-        {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        },
-      );
+      return finish(jsonError(401, "invalid_api_key", "Invalid or missing Hoopilot API key."));
     }
 
     try {
       if (request.method === "GET" && (apiPath === "/" || apiPath === "/healthz")) {
-        return finishResponse(
-          jsonResponse({
-            name: "hoopilot",
-            object: "health",
-            status: "ok",
-          }),
-          { logger: requestLogger, requestId, startedAt },
-        );
+        return finish(jsonResponse({ name: "hoopilot", object: "health", status: "ok" }));
+      }
+      if (request.method === "GET" && apiPath === "/metrics") {
+        return finish(metricsResponse(metrics));
+      }
+      if (request.method === "GET" && apiPath === "/v1/usage") {
+        return finish(await handleUsage(metrics, readUsage, request.signal));
       }
       if (request.method === "GET" && apiPath === "/v1/responses") {
-        return finishResponse(websocketUnsupportedResponse(), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(websocketUnsupportedResponse());
       }
       if (request.method === "GET" && apiPath === "/v1/models") {
-        return finishResponse(await handleModels(client, request.signal, requestLogger), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(await handleModels(client, metrics, request.signal, requestLogger));
       }
       if (request.method === "POST" && apiPath === "/v1/chat/completions") {
-        return finishResponse(await handleChatCompletions(client, request, requestLogger), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(
+          await handleChatCompletions(client, metrics, recordTokens, request, requestLogger),
+        );
       }
       if (request.method === "POST" && apiPath === "/v1/completions") {
-        return finishResponse(await handleCompletions(client, request, requestLogger), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(
+          await handleCompletions(client, metrics, recordTokens, request, requestLogger),
+        );
       }
       if (request.method === "POST" && apiPath === "/v1/responses") {
-        return finishResponse(await handleResponses(client, request, requestLogger), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(await handleResponses(client, metrics, recordTokens, request, requestLogger));
       }
-      return finishResponse(
-        jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`),
-        { logger: requestLogger, requestId, startedAt },
-      );
+      return finish(jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`));
     } catch (error) {
       if (error instanceof CopilotAuthError) {
         requestLogger.warn(
           { err: errorDetails(error), event: "copilot.auth.missing" },
           "copilot auth failed",
         );
-        return finishResponse(jsonError(401, "copilot_auth_error", error.message), {
-          logger: requestLogger,
-          requestId,
-          startedAt,
-        });
+        return finish(jsonError(401, "copilot_auth_error", error.message));
       }
       const message = errorMessage(error);
       if (message === INVALID_JSON_MESSAGE) {
@@ -134,11 +127,7 @@ export function createHoopilotHandler(
           "request failed",
         );
       }
-      return finishResponse(jsonError(500, "internal_error", message), {
-        logger: requestLogger,
-        requestId,
-        startedAt,
-      });
+      return finish(jsonError(500, "internal_error", message));
     }
   };
 }
@@ -175,10 +164,12 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
 
 async function handleModels(
   client: CopilotClient,
+  metrics: MetricsRegistry,
   signal: AbortSignal,
   logger: HoopilotLogger,
 ): Promise<Response> {
   const upstream = await client.models(signal);
+  metrics.recordUpstream("/models", upstream.ok);
   if (!upstream.ok) {
     if (isUpstreamAuthStatus(upstream.status)) {
       return proxyError(upstream, logger);
@@ -199,20 +190,26 @@ async function handleModels(
 
 async function handleChatCompletions(
   client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
 ): Promise<Response> {
   const chatRequest = normalizeChatCompletionRequest(await readJson(request));
   const upstream = await client.chatCompletions(chatRequest, request.signal);
+  metrics.recordUpstream("/chat/completions", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
-  return proxyResponse(upstream);
+  const model = normalizeRequestedModel(chatRequest.model);
+  return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
 }
 
 async function handleCompletions(
   client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
 ): Promise<Response> {
@@ -221,30 +218,42 @@ async function handleCompletions(
     completionsRequestToChatCompletion(body),
     request.signal,
   );
+  metrics.recordUpstream("/chat/completions", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
+  const model = normalizeRequestedModel(body.model);
   // A streaming request yields an SSE body; calling .json() on it would throw a
   // 500. Pass the stream straight through and only convert non-streaming bodies.
   if (isStreamingResponse(upstream)) {
-    return proxyResponse(upstream);
+    return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
   }
-  return jsonResponse(chatCompletionToCompletion(await upstream.json()));
+  const completion = asRecord(await upstream.json());
+  const usage = extractTokenUsage(completion.usage);
+  if (usage) {
+    const responseModel = typeof completion.model === "string" ? completion.model.trim() : "";
+    recordTokens(responseModel || model, usage);
+  }
+  return jsonResponse(chatCompletionToCompletion(completion));
 }
 
 async function handleResponses(
   client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
 ): Promise<Response> {
   const body = await readJsonText(request);
   const upstream = await client.responses(body, request.signal);
+  metrics.recordUpstream("/responses", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
   logUpstreamSuccess(logger, "/responses", upstream.status);
-  return proxyResponse(upstream);
+  const model = normalizeRequestedModel(asRecord(safeParseJson(body)).model);
+  return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
 }
 
 async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<Response> {
@@ -378,10 +387,36 @@ function serverLogger(options: HoopilotServerOptions): HoopilotLogger {
 
 function finishResponse(
   response: Response,
-  options: { logger: HoopilotLogger; requestId: string; startedAt: number },
+  options: {
+    logger: HoopilotLogger;
+    method: string;
+    metrics: MetricsRegistry;
+    requestId: string;
+    route: string;
+    startedAt: number;
+  },
 ): Response {
   const withRequestId = responseWithRequestId(response, options.requestId);
-  logRequestCompleted(options.logger, withRequestId, options.startedAt);
+  const stream = isStreamingResponse(withRequestId);
+  const status = withRequestId.status;
+  // Record metrics and log when the response is truly done. For a streamed body
+  // that is when the client finishes receiving (or aborts) — so the in-flight
+  // gauge and duration histogram reflect the full serving lifetime, not just the
+  // time to upstream headers.
+  const complete = (): void => {
+    const durationMs = Math.round((performance.now() - options.startedAt) * 100) / 100;
+    options.metrics.observe({ durationMs, method: options.method, route: options.route, status });
+    logRequestCompleted(options.logger, status, stream, durationMs);
+  };
+
+  if (stream && withRequestId.body) {
+    return new Response(trackStreamCompletion(withRequestId.body, complete), {
+      headers: withRequestId.headers,
+      status,
+      statusText: withRequestId.statusText,
+    });
+  }
+  complete();
   return withRequestId;
 }
 
@@ -395,18 +430,60 @@ function responseWithRequestId(response: Response, requestId: string): Response 
   });
 }
 
-function logRequestCompleted(logger: HoopilotLogger, response: Response, startedAt: number): void {
-  const fields: LogFields = {
-    durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
-    event: "http.request.completed",
-    status: response.status,
-    stream: isStreamingResponse(response),
+// Re-stream `body`, invoking `onComplete` exactly once when the stream finishes,
+// is cancelled (client disconnect), or errors — so callers can measure the true
+// end of a streamed response.
+function trackStreamCompletion(
+  body: ReadableStream<Uint8Array>,
+  onComplete: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let fired = false;
+  const fire = (): void => {
+    if (!fired) {
+      fired = true;
+      onComplete();
+    }
   };
-  if (response.status >= 500) {
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          fire();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        fire();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      fire();
+      return reader.cancel(reason);
+    },
+  });
+}
+
+function logRequestCompleted(
+  logger: HoopilotLogger,
+  status: number,
+  stream: boolean,
+  durationMs: number,
+): void {
+  const fields: LogFields = {
+    durationMs,
+    event: "http.request.completed",
+    status,
+    stream,
+  };
+  if (status >= 500) {
     logger.error(fields, "request completed with server error");
     return;
   }
-  if (response.status >= 400) {
+  if (status >= 400) {
     logger.warn(fields, "request completed with client error");
     return;
   }
@@ -429,6 +506,8 @@ function canonicalApiPath(path: string): string {
       return "/v1/completions";
     case "/responses":
       return "/v1/responses";
+    case "/usage":
+      return "/v1/usage";
     default:
       return withoutTrailingSlash;
   }
@@ -440,6 +519,12 @@ function routeFor(method: string, path: string): string {
   }
   if (method === "GET" && (path === "/" || path === "/healthz")) {
     return "health";
+  }
+  if (method === "GET" && path === "/metrics") {
+    return "metrics";
+  }
+  if (method === "GET" && path === "/v1/usage") {
+    return "usage";
   }
   if (method === "GET" && path === "/v1/models") {
     return "models";
@@ -472,4 +557,74 @@ function logUpstreamSuccess(logger: HoopilotLogger, upstreamPath: string, status
     },
     "copilot upstream request completed",
   );
+}
+
+function metricsResponse(metrics: MetricsRegistry): Response {
+  return new Response(metrics.renderPrometheus(), {
+    headers: {
+      ...corsHeaders(),
+      "content-type": PROMETHEUS_CONTENT_TYPE,
+    },
+    status: 200,
+  });
+}
+
+async function handleUsage(
+  metrics: MetricsRegistry,
+  readUsage: UsageReader,
+  signal: AbortSignal,
+): Promise<Response> {
+  const proxy = metrics.snapshot();
+  const { copilot, error } = await readUsage(signal);
+  const body: JsonObject = { copilot: copilot ?? null, object: "usage", proxy };
+  if (error) {
+    body.copilot_error = error;
+  }
+  return jsonResponse(body);
+}
+
+/**
+ * Build a memoizing reader for the Copilot quota. The result is cached for
+ * {@link USAGE_CACHE_TTL_MS} so repeated `/v1/usage` scrapes do not hammer
+ * GitHub's REST rate limit, and missing credentials or upstream errors surface
+ * as an `error` string rather than failing the whole response.
+ */
+export function createUsageReader(
+  client: CopilotClient,
+  metrics: MetricsRegistry,
+  now: () => number = Date.now,
+  ttlMs = USAGE_CACHE_TTL_MS,
+): UsageReader {
+  const usagePath = "/copilot_internal/user";
+  let cache: { atMs: number; value: CopilotUsage } | undefined;
+  return async (signal) => {
+    if (cache && now() - cache.atMs < ttlMs) {
+      return { copilot: cache.value };
+    }
+    try {
+      const upstream = await client.usage(signal);
+      metrics.recordUpstream(usagePath, upstream.ok);
+      if (!upstream.ok) {
+        return { error: `GitHub Copilot usage request failed with ${upstream.status}.` };
+      }
+      const value = normalizeCopilotUsage(await upstream.json().catch(() => ({})));
+      cache = { atMs: now(), value };
+      metrics.recordCopilotQuota(value);
+      return { copilot: value };
+    } catch (error) {
+      metrics.recordUpstream(usagePath, false);
+      if (error instanceof CopilotAuthError) {
+        return { error: error.message };
+      }
+      return { error: errorMessage(error) };
+    }
+  };
+}
+
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }

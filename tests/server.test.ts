@@ -3,8 +3,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
-import { createHoopilotHandler, startHoopilotServer } from "../src/server";
+import { CopilotClient } from "../src/copilot";
+import { MetricsRegistry } from "../src/metrics";
+import { createHoopilotHandler, createUsageReader, startHoopilotServer } from "../src/server";
 import type { FetchLike, HoopilotLogger, HoopilotServerOptions, LogFields } from "../src/types";
+
+const tick = (ms = 10): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("createHoopilotHandler", () => {
   it("proxies chat completions to Copilot", async () => {
@@ -557,6 +561,224 @@ describe("createHoopilotHandler", () => {
 
     expect(started.url).toStartWith("http://127.0.0.1:");
     started.server.stop(true);
+  });
+});
+
+describe("metrics and usage endpoints", () => {
+  it("exposes Prometheus metrics at /metrics", async () => {
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
+
+    const response = await handler(new Request("http://localhost/metrics"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("version=0.0.4");
+    const body = await response.text();
+    expect(body).toContain("hoopilot_process_start_time_seconds");
+    expect(body).toContain("# TYPE hoopilot_requests_total counter");
+  });
+
+  it("gates /metrics behind the configured API key", async () => {
+    const handler = createHoopilotHandler({ apiKey: "local-key", env: {}, fetch: unusedFetch });
+
+    expect((await handler(new Request("http://localhost/metrics"))).status).toBe(401);
+  });
+
+  it("records token usage and request counts from chat completions", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          choices: [{ message: { content: "hi", role: "assistant" } }],
+          model: "gpt-4.1",
+          usage: { completion_tokens: 3, prompt_tokens: 7, total_tokens: 10 },
+        }),
+      ),
+      metrics,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/chat/completions", {
+        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+    await tick();
+
+    const snapshot = metrics.snapshot();
+    expect(snapshot.requests.total).toBe(1);
+    expect(snapshot.requests.byRoute.chat_completions).toBe(1);
+    expect(snapshot.upstream).toEqual({ errors: 0, total: 1 });
+    expect(snapshot.tokens.byModel["gpt-4.1"]).toMatchObject({
+      completion: 3,
+      prompt: 7,
+      requests: 1,
+      total: 10,
+    });
+  });
+
+  it("serves proxy metrics plus live Copilot quota at /v1/usage", async () => {
+    const metrics = new MetricsRegistry();
+    const requests: Request[] = [];
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url.includes("/copilot_internal/user")) {
+          return Response.json({
+            copilot_plan: "individual_pro",
+            quota_reset_date: "2026-07-01",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                percent_remaining: 96.7,
+                remaining: 290,
+                unlimited: false,
+              },
+            },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      }),
+      metrics,
+    });
+
+    const response = await handler(new Request("http://localhost/v1/usage"));
+
+    expect(response.status).toBe(200);
+    expect(requests[0]!.url).toBe("https://api.github.com/copilot_internal/user");
+    expect(requests[0]!.headers.get("authorization")).toBe("token oauth-token");
+    expect(requests[0]!.headers.get("x-github-api-version")).toBe("2025-04-01");
+    const body = (await response.json()) as {
+      copilot: { plan: string; quotas: Record<string, { used: number }> };
+      object: string;
+      proxy: { uptimeSeconds: number };
+    };
+    expect(body.object).toBe("usage");
+    expect(body.copilot.plan).toBe("individual_pro");
+    expect(body.copilot.quotas.premium_interactions!.used).toBe(10);
+    expect(typeof body.proxy.uptimeSeconds).toBe("number");
+    // The quota call is recorded as an upstream request and cached for /metrics gauges.
+    expect(metrics.snapshot().upstream).toEqual({ errors: 0, total: 1 });
+    expect(metrics.renderPrometheus()).toContain(
+      'hoopilot_copilot_quota_remaining{category="premium_interactions"} 290',
+    );
+  });
+
+  it("records token usage from legacy completions using the response model", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "legacy", role: "assistant" } }],
+          model: "gpt-4.1-2025",
+          usage: { completion_tokens: 4, prompt_tokens: 6, total_tokens: 10 },
+        }),
+      ),
+      metrics,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: "hello" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+    await tick();
+
+    // The response model overrides the requested model in the token label.
+    expect(metrics.snapshot().tokens.byModel["gpt-4.1-2025"]).toMatchObject({
+      completion: 4,
+      prompt: 6,
+      total: 10,
+    });
+  });
+
+  it("records token usage from a non-streaming Responses body", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          model: "gpt-5.5",
+          object: "response",
+          output_text: "hi",
+          status: "completed",
+          usage: { input_tokens: 12, output_tokens: 5, total_tokens: 17 },
+        }),
+      ),
+      metrics,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({ input: "hello", model: "gpt-5.5" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+    await tick();
+
+    expect(metrics.snapshot().tokens.byModel["gpt-5.5"]).toMatchObject({
+      completion: 5,
+      prompt: 12,
+      total: 17,
+    });
+  });
+
+  it("caches the Copilot quota within the TTL and refetches after it expires", async () => {
+    let calls = 0;
+    let nowMs = 1_000;
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () => {
+        calls += 1;
+        return Response.json({
+          copilot_plan: "individual_pro",
+          quota_snapshots: { premium_interactions: { entitlement: 300, remaining: 290 } },
+        });
+      },
+    });
+    const metrics = new MetricsRegistry();
+    const read = createUsageReader(client, metrics, () => nowMs, 60_000);
+
+    await read();
+    await read();
+    expect(calls).toBe(1);
+
+    nowMs += 60_001;
+    await read();
+    expect(calls).toBe(2);
+    expect(metrics.snapshot().upstream.total).toBe(2);
+  });
+
+  it("reports Copilot quota errors without failing /v1/usage", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => new Response("forbidden", { status: 403 })),
+    );
+
+    const response = await handler(new Request("http://localhost/v1/usage"));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { copilot: unknown; copilot_error: string };
+    expect(body.copilot).toBeNull();
+    expect(body.copilot_error).toContain("403");
+  });
+
+  it("reports missing credentials at /v1/usage without a 401", async () => {
+    const handler = createHoopilotHandler({
+      authStorePath: join(mkdtempSync(join(tmpdir(), "hoopilot-usage-noauth-")), "auth.json"),
+      env: {},
+      fetch: unusedFetch,
+    });
+
+    const response = await handler(new Request("http://localhost/v1/usage"));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { copilot: unknown; copilot_error: string };
+    expect(body.copilot).toBeNull();
+    expect(body.copilot_error).toContain("hoopilot login");
   });
 });
 

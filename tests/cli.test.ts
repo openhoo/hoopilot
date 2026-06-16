@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
-import { parseArgs, runModels, verifyCopilotOAuthToken } from "../src/cli";
+import { parseArgs, runModels, runUsage, verifyCopilotOAuthToken } from "../src/cli";
 import type { FetchLike } from "../src/types";
 
 describe("parseArgs", () => {
@@ -116,6 +116,71 @@ describe("runModels", () => {
       expect(lines).toEqual(["gpt-4.1", "gpt-5.5"]);
       expect(requests[0]!.url).toBe("https://api.githubcopilot.example/models");
       expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("runUsage", () => {
+  it("prints the Copilot plan and quota", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-usage-test-"));
+    try {
+      const authPath = join(dir, "auth.json");
+      writeStoredCopilotAuth({ token: "oauth-token" }, authPath);
+
+      const requests: Request[] = [];
+      const fetcher: FetchLike = async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({
+          access_type_sku: "copilot_pro",
+          copilot_plan: "individual_pro",
+          quota_reset_date: "2026-07-01",
+          quota_snapshots: {
+            chat: { unlimited: true },
+            premium_interactions: {
+              entitlement: 300,
+              percent_remaining: 88.5,
+              remaining: 265.5,
+              unlimited: false,
+            },
+          },
+        });
+      };
+      const lines: string[] = [];
+      const originalLog = console.log;
+      console.log = (...values: unknown[]) => {
+        lines.push(values.join(" "));
+      };
+      try {
+        const usage = await runUsage({ authStorePath: authPath, fetch: fetcher });
+        expect(usage.plan).toBe("individual_pro");
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(requests[0]!.url).toBe("https://api.github.com/copilot_internal/user");
+      expect(requests[0]!.headers.get("authorization")).toBe("token oauth-token");
+      expect(requests[0]!.headers.get("x-github-api-version")).toBe("2025-04-01");
+      expect(lines).toContain("Plan: individual_pro");
+      expect(lines).toContain("Quota resets: 2026-07-01");
+      expect(lines).toContain("Premium requests: 34.5/300 used, 88.5% remaining");
+      expect(lines).toContain("Chat: unlimited");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports Copilot usage auth failures", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-usage-fail-"));
+    try {
+      const authPath = join(dir, "auth.json");
+      writeStoredCopilotAuth({ token: "oauth-token" }, authPath);
+      const fetcher: FetchLike = async () => new Response("forbidden", { status: 403 });
+
+      await expect(runUsage({ authStorePath: authPath, fetch: fetcher })).rejects.toThrow(
+        "GitHub Copilot usage request failed with 403",
+      );
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

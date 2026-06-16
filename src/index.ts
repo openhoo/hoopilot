@@ -1,6 +1,13 @@
 export { CopilotAuth, CopilotAuthError } from "./auth";
 export { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "./auth-store";
-export { CopilotClient } from "./copilot";
+export {
+  applyCopilotHeaders,
+  applyGithubApiHeaders,
+  COPILOT_USAGE_API_VERSION,
+  CopilotClient,
+  DEFAULT_GITHUB_API_BASE_URL,
+  normalizeCopilotUsage,
+} from "./copilot";
 export { githubCopilotDeviceLogin } from "./github-device";
 export {
   createHoopilotLogger,
@@ -11,10 +18,16 @@ export {
   parseLogLevel,
 } from "./logger";
 export {
+  MetricsRegistry,
+  observeResponseUsage,
+  PROMETHEUS_CONTENT_TYPE,
+} from "./metrics";
+export {
   chatCompletionToCompletion,
   chatCompletionToResponse,
   completionsRequestToChatCompletion,
   DEFAULT_MODEL,
+  extractTokenUsage,
   fallbackModels,
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
@@ -26,6 +39,8 @@ export { createHoopilotHandler, startHoopilotServer } from "./server";
 export type {
   CopilotAccess,
   CopilotAuthOptions,
+  CopilotQuota,
+  CopilotUsage,
   FetchLike,
   HoopilotLogger,
   HoopilotLoggerOptions,
@@ -36,5 +51,9 @@ export type {
   Logger,
   LogLevel,
   LogMethod,
+  MetricsSnapshot,
+  ModelTokenTotals,
+  RequestObservation,
   StartedHoopilotServer,
+  TokenUsage,
 } from "./types";

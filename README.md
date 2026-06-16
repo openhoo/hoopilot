@@ -154,6 +154,18 @@ Equivalent environment variables:
 
 Incoming `x-request-id` headers are preserved on responses. If a request has no ID, Hoopilot generates one and returns it as `x-request-id`.
 
+## Metrics and usage
+
+Hoopilot tracks token usage, request counts, and latency in memory while the server runs, and can report your GitHub Copilot account quota (premium-request "credit" usage).
+
+- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters (`hoopilot_requests_total`), upstream call counters (`hoopilot_upstream_requests_total`), token counters by model and type (`hoopilot_tokens_total{model,type}`), a request-duration histogram (`hoopilot_request_duration_seconds`), an in-flight gauge, and—once `/v1/usage` has been fetched at least once—Copilot quota gauges (`hoopilot_copilot_quota_remaining{category}`, `_entitlement`, `_used`, `_percent_remaining`). Counters reset to zero on restart, which Prometheus handles natively.
+- `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub (cached for 60 seconds). If the quota cannot be read, `copilot` is `null` and `copilot_error` explains why, but the proxy metrics are still returned.
+- `hoopilot usage` prints your Copilot plan and quota from the command line.
+
+Token usage is read from the upstream `usage` object. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot never injects it, so streamed chat requests without that flag contribute request and latency metrics but not token counts. The Responses API always reports usage, so streamed Responses requests are fully accounted.
+
+`/metrics` and `/v1/usage` are subject to the same `HOOPILOT_API_KEY` gate as the other routes.
+
 ## Authentication
 
 Hoopilot supports one credential flow: GitHub Copilot OAuth browser login.
@@ -171,6 +183,7 @@ Supported authentication-related settings:
 - `HOOPILOT_GITHUB_CLIENT_ID`: GitHub OAuth app client ID override. The default uses the same GitHub Copilot OAuth app as opencode's Copilot provider.
 - `HOOPILOT_GITHUB_DOMAIN`: GitHub domain override. Default: `github.com`.
 - `COPILOT_API_BASE_URL`: upstream Copilot API base URL override. Default: `https://api.githubcopilot.com`.
+- `HOOPILOT_GITHUB_API_BASE_URL`: GitHub REST API base URL used for the Copilot quota lookup. Default: `https://api.github.com`.
 
 ## Codex Auth Errors
 
@@ -201,6 +214,7 @@ If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` an
 hoopilot [serve] [options]
 hoopilot login [options]
 hoopilot models [options]
+hoopilot usage [options]
 ```
 
 Commands:
@@ -209,6 +223,7 @@ Commands:
 serve                             Start the proxy server (default)
 login                             Sign in through GitHub OAuth in a browser and verify Copilot access
 models                            List available GitHub Copilot model IDs
+usage                             Show GitHub Copilot quota and premium-request usage
 update, upgrade                   Update hoopilot to the latest release
 ```
 
@@ -229,12 +244,14 @@ Options:
 ## Endpoints
 
 - `GET /healthz`
+- `GET /metrics`
 - `GET /v1/models`
+- `GET /v1/usage`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
 - `POST /v1/completions`
 
-`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/completions` translates legacy completion requests and responses to the closest chat completions equivalent.
+`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/completions` translates legacy completion requests and responses to the closest chat completions equivalent. `GET /metrics` and `GET /v1/usage` report proxy metrics and Copilot quota (see [Metrics and usage](#metrics-and-usage)).
 
 ## Development
 

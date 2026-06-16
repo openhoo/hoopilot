@@ -1,3 +1,5 @@
+import type { MetricsRegistry } from "./metrics";
+
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface Logger {
@@ -39,6 +41,7 @@ export interface CopilotAuthOptions {
   copilotApiBaseUrl?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
+  githubApiBaseUrl?: string;
 }
 
 export interface CopilotAccess {
@@ -55,6 +58,7 @@ export interface HoopilotServerOptions extends CopilotAuthOptions {
   logger?: HoopilotLogger;
   logFormat?: LogFormat | string;
   logLevel?: LogLevel | string;
+  metrics?: MetricsRegistry;
   port?: number;
 }
 
@@ -64,3 +68,74 @@ export interface StartedHoopilotServer {
 }
 
 export type JsonObject = Record<string, unknown>;
+
+/** Normalized token usage extracted from an upstream OpenAI/Copilot response. */
+export interface TokenUsage {
+  cachedTokens?: number;
+  completionTokens: number;
+  promptTokens: number;
+  reasoningTokens?: number;
+  totalTokens: number;
+}
+
+/** Per-model token totals accumulated by the metrics registry. */
+export interface ModelTokenTotals {
+  cached: number;
+  completion: number;
+  prompt: number;
+  reasoning: number;
+  requests: number;
+  total: number;
+}
+
+/** A single completed request's facts, recorded into the metrics registry. */
+export interface RequestObservation {
+  durationMs: number;
+  method: string;
+  route: string;
+  status: number;
+}
+
+/** One quota category (chat, completions, or premium_interactions/credits). */
+export interface CopilotQuota {
+  entitlement?: number;
+  overageCount?: number;
+  overagePermitted?: boolean;
+  percentRemaining?: number;
+  remaining?: number;
+  unlimited?: boolean;
+  used?: number;
+}
+
+/** A GitHub Copilot account's plan and quota snapshot. */
+export interface CopilotUsage {
+  accessTypeSku?: string;
+  chatEnabled?: boolean;
+  plan?: string;
+  quotaResetDate?: string;
+  quotas: Record<string, CopilotQuota>;
+}
+
+/** A point-in-time JSON view of the in-process metrics. */
+export interface MetricsSnapshot {
+  inFlight: number;
+  requests: {
+    byRoute: Record<string, number>;
+    byStatus: Record<string, number>;
+    total: number;
+  };
+  startedAt: string;
+  tokens: {
+    byModel: Record<string, ModelTokenTotals>;
+    cached: number;
+    completion: number;
+    prompt: number;
+    reasoning: number;
+    total: number;
+  };
+  upstream: {
+    errors: number;
+    total: number;
+  };
+  uptimeSeconds: number;
+}

@@ -3,11 +3,18 @@
 import { spawn } from "node:child_process";
 import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
-import { applyCopilotHeaders, CopilotClient } from "./copilot";
+import { applyCopilotHeaders, CopilotClient, normalizeCopilotUsage } from "./copilot";
 import { githubCopilotDeviceLogin } from "./github-device";
 import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
 import { startHoopilotServer } from "./server";
-import type { CopilotAccess, FetchLike, HoopilotLogger, HoopilotServerOptions } from "./types";
+import type {
+  CopilotAccess,
+  CopilotQuota,
+  CopilotUsage,
+  FetchLike,
+  HoopilotLogger,
+  HoopilotServerOptions,
+} from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
 import { asRecord, trimTrailingSlash, truncatedResponseText } from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
@@ -57,6 +64,16 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     }
     args.logger = commandLogger(args, "models");
     await runModels(args);
+    return;
+  }
+  if (command === "usage") {
+    const args = withRuntimeEnv(parseArgs(argv.slice(1)));
+    if (args.help) {
+      console.log(helpText(await getVersion()));
+      return;
+    }
+    args.logger = commandLogger(args, "usage");
+    await runUsage(args);
     return;
   }
 
@@ -225,6 +242,98 @@ export async function runModels(options: HoopilotServerOptions = {}): Promise<st
   return ids;
 }
 
+export async function runUsage(options: HoopilotServerOptions = {}): Promise<CopilotUsage> {
+  const logger = options.logger?.child({ component: "usage" }) ?? noopLogger;
+  logger.debug({ event: "usage.fetch.started" }, "fetching github copilot quota");
+
+  const response = await new CopilotClient(options).usage();
+  if (!response.ok) {
+    const message = `GitHub Copilot usage request failed with ${
+      response.status
+    }: ${await truncatedResponseText(response)}`;
+    if (response.status === 401 || response.status === 403) {
+      throw new CopilotAuthError(message);
+    }
+    throw new Error(message);
+  }
+
+  const usage = normalizeCopilotUsage(await response.json().catch(() => ({})));
+  logger.debug(
+    { event: "usage.fetch.succeeded", plan: usage.plan },
+    "github copilot quota fetched",
+  );
+  for (const line of formatCopilotUsage(usage)) {
+    console.log(line);
+  }
+  return usage;
+}
+
+function formatCopilotUsage(usage: CopilotUsage): string[] {
+  const lines: string[] = [];
+  if (usage.plan) {
+    lines.push(`Plan: ${usage.plan}`);
+  }
+  if (usage.quotaResetDate) {
+    lines.push(`Quota resets: ${usage.quotaResetDate}`);
+  }
+
+  const order = ["premium_interactions", "chat", "completions"];
+  const names = Object.keys(usage.quotas).sort(
+    (a, b) => quotaRank(order, a) - quotaRank(order, b) || a.localeCompare(b),
+  );
+  for (const name of names) {
+    const quota = usage.quotas[name];
+    if (quota) {
+      lines.push(`${quotaLabel(name)}: ${formatQuota(quota)}`);
+    }
+  }
+  if (lines.length === 0) {
+    lines.push("No GitHub Copilot quota information available for this account.");
+  }
+  return lines;
+}
+
+function quotaRank(order: string[], name: string): number {
+  const index = order.indexOf(name);
+  return index === -1 ? order.length : index;
+}
+
+function quotaLabel(name: string): string {
+  switch (name) {
+    case "premium_interactions":
+      return "Premium requests";
+    case "chat":
+      return "Chat";
+    case "completions":
+      return "Completions";
+    default:
+      return name;
+  }
+}
+
+function formatQuota(quota: CopilotQuota): string {
+  if (quota.unlimited) {
+    return "unlimited";
+  }
+  const parts: string[] = [];
+  if (quota.used !== undefined && quota.entitlement !== undefined) {
+    parts.push(`${roundQuota(quota.used)}/${roundQuota(quota.entitlement)} used`);
+  } else if (quota.remaining !== undefined) {
+    parts.push(`${roundQuota(quota.remaining)} remaining`);
+  }
+  if (quota.percentRemaining !== undefined) {
+    parts.push(`${roundQuota(quota.percentRemaining)}% remaining`);
+  }
+  if (quota.overageCount) {
+    parts.push(`${roundQuota(quota.overageCount)} overage`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "n/a";
+}
+
+function roundQuota(value: number): number {
+  return Number.isInteger(value) ? value : Math.round(value * 10) / 10;
+}
+
 export async function verifyCopilotOAuthToken(
   token: string,
   options: VerifyCopilotOAuthTokenOptions = {},
@@ -308,6 +417,7 @@ Usage:
   hoopilot [serve] [options]
   hoopilot login [options]
   hoopilot models [options]
+  hoopilot usage [options]
   hoopilot update
   npx @openhoo/hoopilot [options]
 
@@ -315,7 +425,12 @@ Commands:
   serve                             Start the proxy server (default)
   login                             Sign in through GitHub OAuth in a browser and verify Copilot access
   models                            List available GitHub Copilot model IDs
+  usage                             Show GitHub Copilot quota and premium-request usage
   update, upgrade                   Update hoopilot to the latest release
+
+While the server runs, GET /metrics exposes Prometheus metrics (request counts,
+token usage, latency) and GET /v1/usage returns those metrics plus live Copilot
+quota as JSON.
 
 Options:
   -p, --port <port>                 Port to listen on. Default: 4141
@@ -338,6 +453,7 @@ Environment:
   HOOPILOT_LOG_FORMAT               json or pretty. Default: pretty
   HOOPILOT_LOG_LEVEL                trace, debug, info, warn, error, fatal, or silent
   COPILOT_API_BASE_URL
+  HOOPILOT_GITHUB_API_BASE_URL      GitHub REST base for the usage/quota lookup. Default: https://api.github.com
   HOOPILOT_NO_UPDATE_CHECK          Set to disable update checks (also NO_UPDATE_NOTIFIER)
 `;
 }

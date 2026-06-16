@@ -1,4 +1,4 @@
-import type { JsonObject } from "./types";
+import type { JsonObject, TokenUsage } from "./types";
 import { asRecord } from "./util";
 
 export const DEFAULT_MODEL = "gpt-4.1";
@@ -498,6 +498,49 @@ function responseUsage(usage: unknown): JsonObject | null {
     output_tokens_details: record.completion_tokens_details,
     total_tokens: record.total_tokens,
   });
+}
+
+/**
+ * Normalize an upstream `usage` object into {@link TokenUsage}. Accepts both the
+ * Chat Completions shape (`prompt_tokens`/`completion_tokens`) and the Responses
+ * shape (`input_tokens`/`output_tokens`), and pulls nested reasoning/cached
+ * details when present. Returns undefined when no token counts are available so
+ * callers can distinguish "no usage reported" from "zero tokens".
+ */
+export function extractTokenUsage(usage: unknown): TokenUsage | undefined {
+  const record = asRecord(usage);
+  const prompt = firstNumber(record.prompt_tokens, record.input_tokens);
+  const completion = firstNumber(record.completion_tokens, record.output_tokens);
+  const total = firstNumber(record.total_tokens);
+  if (prompt === undefined && completion === undefined && total === undefined) {
+    return undefined;
+  }
+  const promptTokens = prompt ?? 0;
+  const completionTokens = completion ?? 0;
+  const reasoning = firstNumber(
+    asRecord(record.completion_tokens_details).reasoning_tokens,
+    asRecord(record.output_tokens_details).reasoning_tokens,
+  );
+  const cached = firstNumber(
+    asRecord(record.prompt_tokens_details).cached_tokens,
+    asRecord(record.input_tokens_details).cached_tokens,
+  );
+  return removeUndefined({
+    cachedTokens: cached,
+    completionTokens,
+    promptTokens,
+    reasoningTokens: reasoning,
+    totalTokens: total ?? promptTokens + completionTokens,
+  }) as unknown as TokenUsage;
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function firstChoice(completion: JsonObject): Record<string, unknown> {
