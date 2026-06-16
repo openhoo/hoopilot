@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.1 (2026-06-16)
+
+### Bug Fixes
+
+- polish request handling and codexx wrappers (cadc9a1)
+
 ## 0.7.0 (2026-06-16)
 
 ### Features
