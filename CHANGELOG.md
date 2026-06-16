@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.0 (2026-06-16)
+
+### Features
+
+- add Copilot credit and token usage metrics (769c05b)
+
 ## 0.6.1 (2026-06-16)
 
 ### Bug Fixes
