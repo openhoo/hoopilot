@@ -121,6 +121,7 @@ export function createHoopilotHandler(
           { err: errorDetails(error), event: "http.request.failed" },
           "request body was invalid json",
         );
+        return finish(jsonError(400, "invalid_request_error", message));
       } else {
         requestLogger.error(
           { err: errorDetails(error), event: "http.request.failed" },

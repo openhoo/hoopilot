@@ -479,9 +479,9 @@ describe("createHoopilotHandler", () => {
       }),
     );
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "internal_error", message: "Request body must be valid JSON." },
+      error: { code: "invalid_request_error", message: "Request body must be valid JSON." },
     });
     expect(JSON.stringify(logs.entries)).not.toContain("secret prompt text");
   });
