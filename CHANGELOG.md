@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.6.1 (2026-06-16)
+
+### Bug Fixes
+
+- correct streaming item ids and harden proxy I/O (fb27ce3)
+
 ## 0.6.0 (2026-06-15)
 
 ### Features
