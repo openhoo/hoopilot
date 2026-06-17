@@ -189,29 +189,75 @@ describe("chatCompletionToResponse", () => {
 describe("completions compatibility", () => {
   it("maps legacy completions requests and responses", () => {
     const chat = completionsRequestToChatCompletion({
+      frequency_penalty: 0.25,
+      logit_bias: { "42": -1 },
       max_tokens: 8,
       model: "gpt-4.1",
-      prompt: ["hello", "world"],
+      n: 2,
+      presence_penalty: 0.5,
+      prompt: "hello",
+      seed: 123,
+      stop: ["END"],
       stream: true,
+      stream_options: { include_usage: true },
+      temperature: 0.2,
+      top_p: 0.9,
+      user: "user-1",
     });
     expect(chat).toMatchObject({
+      frequency_penalty: 0.25,
+      logit_bias: { "42": -1 },
       max_tokens: 8,
-      messages: [{ content: "hello\nworld", role: "user" }],
+      messages: [{ content: "hello", role: "user" }],
+      n: 2,
+      presence_penalty: 0.5,
+      seed: 123,
+      stop: ["END"],
       stream: true,
+      stream_options: { include_usage: true },
+      temperature: 0.2,
+      top_p: 0.9,
+      user: "user-1",
     });
 
     const completion = chatCompletionToCompletion({
-      choices: [{ finish_reason: "stop", message: { content: "answer" } }],
+      choices: [
+        { finish_reason: "stop", index: 0, message: { content: "answer" } },
+        { finish_reason: "length", index: 1, message: { content: "second" } },
+      ],
       created: 123,
       id: "chatcmpl_1",
       model: "gpt-4.1",
+      system_fingerprint: "fp_test",
     });
     expect(completion).toMatchObject({
-      choices: [{ finish_reason: "stop", text: "answer" }],
+      choices: [
+        { finish_reason: "stop", index: 0, text: "answer" },
+        { finish_reason: "length", index: 1, text: "second" },
+      ],
       created: 123,
       model: "gpt-4.1",
       object: "text_completion",
+      system_fingerprint: "fp_test",
     });
+  });
+
+  it("rejects unsupported legacy completions request shapes explicitly", () => {
+    expect(() =>
+      completionsRequestToChatCompletion({ model: "gpt-4.1", prompt: ["hello", "world"] }),
+    ).toThrow("exactly one string prompt");
+    expect(() =>
+      completionsRequestToChatCompletion({ echo: true, model: "gpt-4.1", prompt: "hello" }),
+    ).toThrow("echo=true");
+    expect(() =>
+      completionsRequestToChatCompletion({ best_of: 2, model: "gpt-4.1", prompt: "hello" }),
+    ).toThrow("best_of");
+    expect(() =>
+      completionsRequestToChatCompletion({ logprobs: 1, model: "gpt-4.1", prompt: "hello" }),
+    ).toThrow("logprobs");
+    expect(() =>
+      completionsRequestToChatCompletion({ model: "gpt-4.1", prompt: "hello", suffix: "after" }),
+    ).toThrow("suffix");
   });
 
   it("maps streamed chat deltas to legacy completion text chunks", async () => {
@@ -219,8 +265,8 @@ describe("completions compatibility", () => {
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n' +
-              'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
+            'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{"content":"hi"}},{"index":1,"delta":{"content":"bye"}}]}\n\n' +
+              'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{},"finish_reason":"length"}]}\n\n' +
               "data: [DONE]\n\n",
           ),
         );
@@ -232,7 +278,9 @@ describe("completions compatibility", () => {
 
     expect(text).toContain('"object":"text_completion"');
     expect(text).toContain('"text":"hi"');
+    expect(text).toContain('"text":"bye"');
     expect(text).toContain('"finish_reason":"stop"');
+    expect(text).toContain('"finish_reason":"length"');
     expect(text).not.toContain('"delta"');
   });
 

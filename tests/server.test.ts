@@ -431,6 +431,32 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("rejects unsupported legacy completions fields before proxying upstream", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => {
+        calls += 1;
+        return Response.json({});
+      }),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: ["one", "two"] }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(calls).toBe(0);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "invalid_request_error",
+        message: expect.stringContaining("exactly one string prompt"),
+      },
+    });
+  });
+
   it("maps upstream auth failures to copilot auth errors", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("forbidden", { status: 403 })),

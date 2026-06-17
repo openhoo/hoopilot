@@ -11,6 +11,7 @@ import {
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  OpenAICompatibilityError,
 } from "./openai";
 import type {
   CopilotUsage,
@@ -142,6 +143,12 @@ export function createHoopilotHandler(
         requestLogger.warn(
           { err: errorDetails(error), event: "http.request.failed" },
           "request body was invalid json",
+        );
+        return finish(jsonError(400, "invalid_request_error", message));
+      } else if (error instanceof OpenAICompatibilityError) {
+        requestLogger.warn(
+          { err: errorDetails(error), event: "http.request.failed" },
+          "request body used unsupported OpenAI compatibility fields",
         );
         return finish(jsonError(400, "invalid_request_error", message));
       } else if (error instanceof RequestBodyTooLargeError) {

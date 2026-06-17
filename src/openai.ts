@@ -17,6 +17,13 @@ interface AccumulatedToolCall {
   outputIndex?: number;
 }
 
+export class OpenAICompatibilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenAICompatibilityError";
+  }
+}
+
 export function responsesRequestToChatCompletion(request: JsonObject): JsonObject {
   const messages: unknown[] = [];
   const instructions = contentToText(request.instructions);
@@ -54,13 +61,22 @@ export function normalizeChatCompletionRequest(request: JsonObject): JsonObject 
 }
 
 export function completionsRequestToChatCompletion(request: JsonObject): JsonObject {
+  assertSupportedLegacyCompletionRequest(request);
   return removeUndefined({
+    frequency_penalty: request.frequency_penalty,
+    logit_bias: request.logit_bias,
     max_tokens: request.max_tokens,
-    messages: [{ content: promptToText(request.prompt), role: "user" }],
+    messages: [{ content: legacyPromptToText(request.prompt), role: "user" }],
     model: normalizeRequestedModel(request.model),
+    n: request.n,
+    presence_penalty: request.presence_penalty,
+    seed: request.seed,
+    stop: request.stop,
     stream: request.stream === true,
+    stream_options: request.stream_options,
     temperature: request.temperature,
     top_p: request.top_p,
+    user: request.user,
   });
 }
 
@@ -100,21 +116,21 @@ export function chatCompletionToResponse(completion: JsonObject, responseId?: st
 }
 
 export function chatCompletionToCompletion(completion: JsonObject): JsonObject {
-  const choice = firstChoice(completion);
-  const message = asRecord(choice.message);
   return removeUndefined({
-    choices: [
-      {
+    choices: completionChoices(completion).map((choice, index) => {
+      const message = asRecord(choice.message);
+      return {
         finish_reason: choice.finish_reason ?? "stop",
-        index: 0,
-        logprobs: null,
-        text: contentToText(message.content),
-      },
-    ],
+        index: typeof choice.index === "number" ? choice.index : index,
+        logprobs: choice.logprobs ?? null,
+        text: contentToText(choice.text) || contentToText(message.content),
+      };
+    }),
     created: completion.created ?? epochSeconds(),
     id: completion.id ?? `cmpl_${randomId()}`,
     model: completion.model ?? DEFAULT_MODEL,
     object: "text_completion",
+    system_fingerprint: completion.system_fingerprint,
     usage: completion.usage,
   });
 }
@@ -474,11 +490,39 @@ function chatMessageContent(content: unknown): string | Array<JsonObject> | unde
   return parts;
 }
 
-function promptToText(prompt: unknown): string {
-  if (Array.isArray(prompt)) {
-    return prompt.map((item) => contentToText(item)).join("\n");
+function legacyPromptToText(prompt: unknown): string {
+  if (typeof prompt === "string") {
+    return prompt;
   }
-  return contentToText(prompt);
+  if (Array.isArray(prompt) && prompt.length === 1 && typeof prompt[0] === "string") {
+    return prompt[0];
+  }
+  throw new OpenAICompatibilityError(
+    "Hoopilot legacy completions compatibility supports exactly one string prompt per request.",
+  );
+}
+
+function assertSupportedLegacyCompletionRequest(request: JsonObject): void {
+  if (request.echo === true) {
+    throw new OpenAICompatibilityError(
+      "Hoopilot legacy completions compatibility does not support echo=true.",
+    );
+  }
+  if (typeof request.best_of === "number" && request.best_of > 1) {
+    throw new OpenAICompatibilityError(
+      "Hoopilot legacy completions compatibility does not support best_of greater than 1.",
+    );
+  }
+  if (typeof request.logprobs === "number" && request.logprobs > 0) {
+    throw new OpenAICompatibilityError(
+      "Hoopilot legacy completions compatibility does not support legacy logprobs.",
+    );
+  }
+  if (contentToText(request.suffix)) {
+    throw new OpenAICompatibilityError(
+      "Hoopilot legacy completions compatibility does not support suffix.",
+    );
+  }
 }
 
 function contentToText(content: unknown): string {
@@ -683,8 +727,12 @@ function firstNumber(...values: unknown[]): number | undefined {
 }
 
 function firstChoice(completion: JsonObject): Record<string, unknown> {
+  return completionChoices(completion)[0] ?? {};
+}
+
+function completionChoices(completion: JsonObject): Array<Record<string, unknown>> {
   const choices = Array.isArray(completion.choices) ? completion.choices : [];
-  return asRecord(choices[0]);
+  return choices.map((choice) => asRecord(choice));
 }
 
 function processCompletionSseBlock(
@@ -722,29 +770,31 @@ function processCompletionSseBlock(
     enqueue({ error });
     return;
   }
-  const choice = firstChoice(parsed);
-  const delta = asRecord(choice.delta);
-  const text = contentToText(delta.content);
-  const finishReason = choice.finish_reason ?? null;
+  const choices = completionChoices(parsed)
+    .map((choice, index) => {
+      const delta = asRecord(choice.delta);
+      const text = contentToText(delta.content);
+      const finishReason = choice.finish_reason ?? null;
+      if (!text && finishReason === null) {
+        return undefined;
+      }
+      return {
+        finish_reason: finishReason,
+        index: typeof choice.index === "number" ? choice.index : index,
+        logprobs: choice.logprobs ?? null,
+        text,
+      };
+    })
+    .filter((choice) => choice !== undefined);
   const usage = asRecord(parsed.usage);
   const hasUsage = Object.keys(usage).length > 0;
-  if (!text && finishReason === null && !hasUsage) {
+  if (choices.length === 0 && !hasUsage) {
     return;
   }
 
   enqueue(
     removeUndefined({
-      choices:
-        text || finishReason !== null
-          ? [
-              {
-                finish_reason: finishReason,
-                index: typeof choice.index === "number" ? choice.index : 0,
-                logprobs: null,
-                text,
-              },
-            ]
-          : [],
+      choices,
       created: typeof parsed.created === "number" ? parsed.created : epochSeconds(),
       id: contentToText(parsed.id) || `cmpl_${randomId()}`,
       model: contentToText(parsed.model) || DEFAULT_MODEL,
