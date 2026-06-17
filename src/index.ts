@@ -1,3 +1,10 @@
+export {
+  AnthropicCompatibilityError,
+  anthropicMessagesToResponsesRequest,
+  estimateAnthropicMessageTokens,
+  responsesResponseToAnthropicMessage,
+  responsesStreamToAnthropicStream,
+} from "./anthropic";
 export { CopilotAuth, CopilotAuthError } from "./auth";
 export { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "./auth-store";
 export {

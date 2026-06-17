@@ -1,3 +1,10 @@
+import {
+  AnthropicCompatibilityError,
+  anthropicMessagesToResponsesRequest,
+  estimateAnthropicMessageTokens,
+  responsesResponseToAnthropicMessage,
+  responsesStreamToAnthropicStream,
+} from "./anthropic";
 import { CopilotAuthError } from "./auth";
 import { CopilotClient, normalizeCopilotUsage } from "./copilot";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
@@ -117,6 +124,14 @@ export function createHoopilotHandler(
       if (request.method === "GET" && apiPath === "/v1/models") {
         return finish(await handleModels(client, metrics, request.signal, requestLogger));
       }
+      if (request.method === "POST" && apiPath === "/v1/messages") {
+        return finish(
+          await handleAnthropicMessages(client, metrics, recordTokens, request, requestLogger),
+        );
+      }
+      if (request.method === "POST" && apiPath === "/v1/messages/count_tokens") {
+        return finish(handleAnthropicCountTokens(await readJson(request)));
+      }
       if (request.method === "POST" && apiPath === "/v1/chat/completions") {
         return finish(
           await handleChatCompletions(client, metrics, recordTokens, request, requestLogger),
@@ -146,10 +161,13 @@ export function createHoopilotHandler(
           "request body was not usable json",
         );
         return finish(jsonError(400, "invalid_request_error", message));
-      } else if (error instanceof OpenAICompatibilityError) {
+      } else if (
+        error instanceof OpenAICompatibilityError ||
+        error instanceof AnthropicCompatibilityError
+      ) {
         requestLogger.warn(
           { err: errorDetails(error), event: "http.request.failed" },
-          "request body used unsupported OpenAI compatibility fields",
+          "request body used unsupported compatibility fields",
         );
         return finish(jsonError(400, "invalid_request_error", message));
       } else if (error instanceof RequestBodyTooLargeError) {
@@ -197,6 +215,50 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
     server,
     url: `http://${urlHost(host)}:${server.port}`,
   };
+}
+
+async function handleAnthropicMessages(
+  client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
+  request: Request,
+  logger: HoopilotLogger,
+): Promise<Response> {
+  const anthropicRequest = await readJson(request);
+  const responsesRequest = anthropicMessagesToResponsesRequest(anthropicRequest);
+  const upstream = await client.responses(JSON.stringify(responsesRequest), request.signal);
+  metrics.recordUpstream("/responses", upstream.ok);
+  if (!upstream.ok) {
+    return proxyError(upstream, logger);
+  }
+  logUpstreamSuccess(logger, "/responses", upstream.status);
+  const model = normalizeRequestedModel(responsesRequest.model);
+
+  if (isStreamingResponse(upstream) && upstream.body) {
+    const observed = observeResponseUsage(upstream, model, recordTokens, request.signal);
+    if (!observed.body) {
+      return proxyResponse(observed);
+    }
+    return proxyResponse(
+      new Response(responsesStreamToAnthropicStream(observed.body, { model }), {
+        headers: observed.headers,
+        status: observed.status,
+        statusText: observed.statusText,
+      }),
+    );
+  }
+
+  const body = asRecord(await upstream.json());
+  const usage = extractTokenUsage(body.usage);
+  if (usage) {
+    const responseModel = typeof body.model === "string" ? body.model.trim() : "";
+    recordTokens(responseModel || model, usage);
+  }
+  return jsonResponse(responsesResponseToAnthropicMessage(body, model));
+}
+
+function handleAnthropicCountTokens(body: JsonObject): Response {
+  return jsonResponse(estimateAnthropicMessageTokens(body));
 }
 
 async function handleModels(
@@ -438,7 +500,8 @@ function websocketUnsupportedResponse(): Response {
 
 function corsHeaders(): Record<string, string> {
   return {
-    "access-control-allow-headers": "authorization, content-type, x-api-key, x-request-id",
+    "access-control-allow-headers":
+      "anthropic-beta, anthropic-dangerous-direct-browser-access, anthropic-version, authorization, content-type, x-api-key, x-request-id",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-origin": "*",
     "access-control-expose-headers": "x-request-id",
@@ -637,6 +700,10 @@ function canonicalApiPath(path: string): string {
       return "/v1/chat/completions";
     case "/completions":
       return "/v1/completions";
+    case "/messages":
+      return "/v1/messages";
+    case "/messages/count_tokens":
+      return "/v1/messages/count_tokens";
     case "/responses":
       return "/v1/responses";
     case "/usage":
@@ -661,6 +728,12 @@ function routeFor(method: string, path: string): string {
   }
   if (method === "GET" && path === "/v1/models") {
     return "models";
+  }
+  if (method === "POST" && path === "/v1/messages") {
+    return "anthropic_messages";
+  }
+  if (method === "POST" && path === "/v1/messages/count_tokens") {
+    return "anthropic_count_tokens";
   }
   if (method === "POST" && path === "/v1/chat/completions") {
     return "chat_completions";

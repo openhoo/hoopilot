@@ -315,6 +315,129 @@ describe("createHoopilotHandler", () => {
     await expect(response.text()).resolves.toContain('"delta":"ok"');
   });
 
+  it("serves Claude Code Messages requests through Copilot Responses", async () => {
+    const upstreamRequests: Request[] = [];
+    const handler = createHoopilotHandler(
+      oauthOptions(async (input, init) => {
+        upstreamRequests.push(new Request(input, init));
+        return Response.json({
+          id: "resp_1",
+          model: "claude-sonnet-4.5",
+          object: "response",
+          output: [
+            {
+              content: [{ text: "hello from claude", type: "output_text" }],
+              role: "assistant",
+              type: "message",
+            },
+          ],
+          status: "completed",
+          usage: { input_tokens: 12, output_tokens: 4 },
+        });
+      }),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/messages", {
+        body: JSON.stringify({
+          max_tokens: 64,
+          messages: [{ content: "hi", role: "user" }],
+          model: "claude-sonnet-4.5",
+          system: "Be terse",
+        }),
+        headers: { "anthropic-version": "2023-06-01" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(upstreamRequests[0]!.url).toBe("https://api.githubcopilot.com/responses");
+    await expect(upstreamRequests[0]!.json()).resolves.toMatchObject({
+      input: [
+        {
+          content: [{ text: "hi", type: "input_text" }],
+          role: "user",
+          type: "message",
+        },
+      ],
+      instructions: "Be terse",
+      max_output_tokens: 64,
+      model: "claude-sonnet-4.5",
+    });
+    await expect(response.json()).resolves.toMatchObject({
+      content: [{ text: "hello from claude", type: "text" }],
+      model: "claude-sonnet-4.5",
+      role: "assistant",
+      stop_reason: "end_turn",
+      type: "message",
+      usage: { input_tokens: 12, output_tokens: 4 },
+    });
+  });
+
+  it("streams Claude Code Messages responses as Anthropic SSE", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(
+        async () =>
+          new Response(
+            [
+              'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"claude-sonnet-4.5"}}\n\n',
+              'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"ok"}\n\n',
+              'event: response.completed\ndata: {"type":"response.completed","response":{"model":"claude-sonnet-4.5","usage":{"input_tokens":3,"output_tokens":1}}}\n\n',
+            ].join(""),
+            {
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+      ),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/messages", {
+        body: JSON.stringify({
+          max_tokens: 64,
+          messages: [{ content: "hi", role: "user" }],
+          model: "claude-sonnet-4.5",
+          stream: true,
+        }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const text = await response.text();
+    expect(text).toContain("event: message_start");
+    expect(text).toContain('"text":"ok"');
+    expect(text).toContain('"type":"text_delta"');
+    expect(text).toContain("event: message_stop");
+  });
+
+  it("serves Claude Code token-count preflights without an upstream request", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => {
+        calls += 1;
+        return Response.json({});
+      }),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/messages/count_tokens", {
+        body: JSON.stringify({
+          messages: [{ content: "count this", role: "user" }],
+          model: "claude-sonnet-4.5",
+        }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { input_tokens: number; total_tokens: number };
+    expect(body.input_tokens).toBeGreaterThan(0);
+    expect(body.total_tokens).toBe(body.input_tokens);
+    expect(calls).toBe(0);
+  });
+
   it("serves legacy completions", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () =>

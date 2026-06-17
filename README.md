@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/%40openhoo%2Fhoopilot?label=npm)](https://www.npmjs.com/package/@openhoo/hoopilot)
 [![CI](https://github.com/openhoo/hoopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/openhoo/hoopilot/actions/workflows/ci.yml)
 
-OpenAI-compatible local proxy for GitHub Copilot accounts. It runs on Bun and exposes `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, and `/v1/models` for clients that can point at a custom OpenAI base URL.
+OpenAI- and Anthropic-compatible local proxy for GitHub Copilot accounts. It runs on Bun and exposes OpenAI-style `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, and `/v1/models` routes plus Claude Code-compatible `/v1/messages` and `/v1/messages/count_tokens` routes.
 
 This project uses GitHub Copilot's service endpoints and is not an official GitHub product. The upstream API can change without notice. Use it only with accounts and usage patterns you are allowed to use.
 
@@ -96,6 +96,18 @@ Point OpenAI-compatible clients at:
 $env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
 $env:OPENAI_API_KEY = "local-key"
 ```
+
+Point Claude Code at the same server through its Anthropic base URL:
+
+```powershell
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4141"
+$env:ANTHROPIC_AUTH_TOKEN = "local-key"
+claude
+```
+
+Hoopilot accepts the local key as either `Authorization: Bearer <key>` or
+`x-api-key: <key>`, so `ANTHROPIC_API_KEY` also works for clients that send
+Anthropic's `x-api-key` header.
 
 Use with Codex CLI after Hoopilot is running, via the bundled `codexx` command. It runs Codex against the local server with the right model provider — selecting `gpt-5.5` over Copilot's Responses API, which a plain `openai_base_url` override does not configure (see the note below):
 
@@ -251,11 +263,13 @@ Options:
 - `GET /metrics`
 - `GET /v1/models`
 - `GET /v1/usage`
+- `POST /v1/messages`
+- `POST /v1/messages/count_tokens`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
 - `POST /v1/completions`
 
-`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/completions` translates legacy completion requests and responses to the closest chat completions equivalent. `GET /metrics` and `GET /v1/usage` report proxy metrics and Copilot quota (see [Metrics and usage](#metrics-and-usage)).
+`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/messages` translates Anthropic Messages requests and responses to Copilot's Responses endpoint for Claude Code and other Anthropic-compatible clients. `/v1/messages/count_tokens` returns a local token estimate for Claude Code preflights because Copilot does not expose Anthropic's count-tokens route. `/v1/completions` translates legacy completion requests and responses to the closest chat completions equivalent. `GET /metrics` and `GET /v1/usage` report proxy metrics and Copilot quota (see [Metrics and usage](#metrics-and-usage)).
 
 ## Development
 
