@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1 | iex
 #
 # With arguments (iex cannot pass params, so wrap in a scriptblock):
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version 0.2.5
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version <version>
 param(
   [string]$Version = $(if ($env:HOOPILOT_VERSION) { $env:HOOPILOT_VERSION } else { 'latest' }),
   [string]$InstallDir = $(if ($env:HOOPILOT_INSTALL_DIR) { $env:HOOPILOT_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\hoopilot" }),

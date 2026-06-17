@@ -212,6 +212,7 @@ If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` an
 
 ```powershell
 hoopilot [serve] [options]
+hoopilot codexx [codex options] [prompt]
 hoopilot login [options]
 hoopilot models [options]
 hoopilot usage [options]
@@ -221,6 +222,7 @@ Commands:
 
 ```txt
 serve                             Start the proxy server (default)
+codexx                            Run Codex through the local Hoopilot server
 login                             Sign in through GitHub OAuth in a browser and verify Copilot access
 models                            List available GitHub Copilot model IDs
 usage                             Show GitHub Copilot quota and premium-request usage
