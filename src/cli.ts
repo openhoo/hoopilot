@@ -16,7 +16,7 @@ import type {
   HoopilotServerOptions,
 } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
-import { asRecord, trimTrailingSlash, truncatedResponseText } from "./util";
+import { asRecord, isHttpsOrLoopbackUrl, trimTrailingSlash, truncatedResponseText } from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 interface ParsedArgs extends HoopilotServerOptions {
@@ -341,6 +341,9 @@ export async function verifyCopilotOAuthToken(
   const apiBaseUrl = trimTrailingSlash(
     options.copilotApiBaseUrl ?? options.env?.COPILOT_API_BASE_URL ?? DEFAULT_COPILOT_API_BASE_URL,
   );
+  if (!isHttpsOrLoopbackUrl(apiBaseUrl)) {
+    throw new Error(`Refusing to send the GitHub OAuth token to a non-HTTPS host: ${apiBaseUrl}`);
+  }
   const fetcher = options.fetch ?? fetch;
   const response = await fetcher(`${apiBaseUrl}/models`, {
     headers: applyCopilotHeaders(new Headers(), token),

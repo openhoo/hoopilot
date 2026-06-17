@@ -6,7 +6,7 @@ import type {
   FetchLike,
   JsonObject,
 } from "./types";
-import { asRecord, trimTrailingSlash } from "./util";
+import { asRecord, isHttpsOrLoopbackUrl, trimTrailingSlash } from "./util";
 
 /** Default GitHub REST host that serves the `copilot_internal/user` quota route. */
 export const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
@@ -76,7 +76,7 @@ export class CopilotClient {
     // The quota call sends the raw, long-lived OAuth token. Never transmit it
     // over plaintext to a non-loopback host, so a misconfigured base URL cannot
     // exfiltrate the credential.
-    if (!isHttpsOrLoopback(this.#githubApiBaseUrl)) {
+    if (!isHttpsOrLoopbackUrl(this.#githubApiBaseUrl)) {
       throw new Error(
         `Refusing to send the GitHub OAuth token to a non-HTTPS host: ${this.#githubApiBaseUrl}`,
       );
@@ -124,6 +124,11 @@ export class CopilotClient {
 
   async fetchCopilot(path: string, init: RequestInit): Promise<Response> {
     const access = await this.#auth.getAccess();
+    if (!isHttpsOrLoopbackUrl(access.apiBaseUrl)) {
+      throw new Error(
+        `Refusing to send the GitHub OAuth token to a non-HTTPS host: ${access.apiBaseUrl}`,
+      );
+    }
     const headers = applyCopilotHeaders(new Headers(init.headers), access.token);
 
     return this.#fetch(`${access.apiBaseUrl}${path}`, {
@@ -203,23 +208,6 @@ function usedFrom(
     return undefined;
   }
   return Math.max(0, entitlement - remaining);
-}
-
-/** True for https URLs, or http only on loopback hosts (used by tests). */
-function isHttpsOrLoopback(rawUrl: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (url.protocol === "https:") {
-    return true;
-  }
-  return (
-    url.protocol === "http:" &&
-    (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1")
-  );
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

@@ -79,6 +79,21 @@ describe("verifyCopilotOAuthToken", () => {
       }),
     ).rejects.toThrow("GitHub Copilot API verification failed with 403");
   });
+
+  it("does not send OAuth tokens to plaintext non-loopback Copilot API URLs", async () => {
+    let calls = 0;
+
+    await expect(
+      verifyCopilotOAuthToken("oauth-token", {
+        copilotApiBaseUrl: "http://copilot.internal",
+        fetch: async () => {
+          calls += 1;
+          return Response.json({});
+        },
+      }),
+    ).rejects.toThrow("Refusing to send the GitHub OAuth token to a non-HTTPS host");
+    expect(calls).toBe(0);
+  });
 });
 
 describe("runModels", () => {
