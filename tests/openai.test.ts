@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   chatCompletionToCompletion,
   chatCompletionToResponse,
+  completionStreamFromChatStream,
   completionsRequestToChatCompletion,
   fallbackModels,
   normalizeChatCompletionRequest,
@@ -209,6 +210,28 @@ describe("completions compatibility", () => {
       model: "gpt-4.1",
       object: "text_completion",
     });
+  });
+
+  it("maps streamed chat deltas to legacy completion text chunks", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n' +
+              'data: {"id":"chatcmpl_1","created":123,"model":"gpt-4.1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
+              "data: [DONE]\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const text = await new Response(completionStreamFromChatStream(source)).text();
+
+    expect(text).toContain('"object":"text_completion"');
+    expect(text).toContain('"text":"hi"');
+    expect(text).toContain('"finish_reason":"stop"');
+    expect(text).not.toContain('"delta"');
   });
 });
 

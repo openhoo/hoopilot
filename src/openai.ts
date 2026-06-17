@@ -117,6 +117,54 @@ export function chatCompletionToCompletion(completion: JsonObject): JsonObject {
   });
 }
 
+export function completionStreamFromChatStream(
+  chatStream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let sawDone = false;
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enqueue = (data: JsonObject | "[DONE]") => {
+        controller.enqueue(encoder.encode(encodeDataSse(data)));
+      };
+      const reader = chatStream.getReader();
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) {
+            break;
+          }
+          buffer += decoder.decode(result.value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            processCompletionSseLine(line, enqueue, () => {
+              sawDone = true;
+            });
+          }
+        }
+        if (buffer) {
+          processCompletionSseLine(buffer, enqueue, () => {
+            sawDone = true;
+          });
+        }
+        if (!sawDone) {
+          enqueue("[DONE]");
+        }
+        controller.close();
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        controller.error(error);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
 export function normalizeModelsResponse(upstream: unknown): JsonObject {
   const record = asRecord(upstream);
   const data = Array.isArray(record.data) ? record.data : Array.isArray(upstream) ? upstream : [];
@@ -548,6 +596,61 @@ function firstChoice(completion: JsonObject): Record<string, unknown> {
   return asRecord(choices[0]);
 }
 
+function processCompletionSseLine(
+  line: string,
+  enqueue: (data: JsonObject | "[DONE]") => void,
+  markDone: () => void,
+): void {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) {
+    return;
+  }
+  const data = trimmed.slice("data:".length).trim();
+  if (!data) {
+    return;
+  }
+  if (data === "[DONE]") {
+    markDone();
+    enqueue("[DONE]");
+    return;
+  }
+
+  const parsed = parseJson(data);
+  if (!parsed) {
+    return;
+  }
+  const choice = firstChoice(parsed);
+  const delta = asRecord(choice.delta);
+  const text = contentToText(delta.content);
+  const finishReason = choice.finish_reason ?? null;
+  const usage = asRecord(parsed.usage);
+  const hasUsage = Object.keys(usage).length > 0;
+  if (!text && finishReason === null && !hasUsage) {
+    return;
+  }
+
+  enqueue(
+    removeUndefined({
+      choices:
+        text || finishReason !== null
+          ? [
+              {
+                finish_reason: finishReason,
+                index: typeof choice.index === "number" ? choice.index : 0,
+                logprobs: null,
+                text,
+              },
+            ]
+          : [],
+      created: typeof parsed.created === "number" ? parsed.created : epochSeconds(),
+      id: contentToText(parsed.id) || `cmpl_${randomId()}`,
+      model: contentToText(parsed.model) || DEFAULT_MODEL,
+      object: "text_completion",
+      usage: hasUsage ? usage : undefined,
+    }),
+  );
+}
+
 function processChatSseLine(
   messageId: string,
   line: string,
@@ -632,6 +735,13 @@ function encodeSse(event: string, data: JsonObject | "[DONE]"): string {
     return "data: [DONE]\n\n";
   }
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function encodeDataSse(data: JsonObject | "[DONE]"): string {
+  if (data === "[DONE]") {
+    return "data: [DONE]\n\n";
+  }
+  return `data: ${JSON.stringify(data)}\n\n`;
 }
 
 function parseJson(data: string): JsonObject | undefined {

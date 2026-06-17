@@ -25,6 +25,7 @@ export {
 export {
   chatCompletionToCompletion,
   chatCompletionToResponse,
+  completionStreamFromChatStream,
   completionsRequestToChatCompletion,
   DEFAULT_MODEL,
   extractTokenUsage,

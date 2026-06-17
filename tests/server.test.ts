@@ -332,7 +332,9 @@ describe("createHoopilotHandler", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain('"content":"hi"');
+    const text = await response.text();
+    expect(text).toContain('"text":"hi"');
+    expect(text).not.toContain('"delta"');
   });
 
   it("maps upstream non-auth errors to OpenAI-style errors", async () => {

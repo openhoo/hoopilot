@@ -4,6 +4,7 @@ import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } fr
 import { MetricsRegistry, observeResponseUsage, PROMETHEUS_CONTENT_TYPE } from "./metrics";
 import {
   chatCompletionToCompletion,
+  completionStreamFromChatStream,
   completionsRequestToChatCompletion,
   extractTokenUsage,
   fallbackModels,
@@ -236,10 +237,21 @@ async function handleCompletions(
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
   const model = normalizeRequestedModel(body.model);
-  // A streaming request yields an SSE body; calling .json() on it would throw a
-  // 500. Pass the stream straight through and only convert non-streaming bodies.
-  if (isStreamingResponse(upstream)) {
-    return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
+  // A streaming request yields chat-completion SSE; convert each chunk to the
+  // legacy completions stream shape instead of calling .json() on the body.
+  if (isStreamingResponse(upstream) && upstream.body) {
+    return proxyResponse(
+      observeResponseUsage(
+        new Response(completionStreamFromChatStream(upstream.body), {
+          headers: upstream.headers,
+          status: upstream.status,
+          statusText: upstream.statusText,
+        }),
+        model,
+        recordTokens,
+        request.signal,
+      ),
+    );
   }
   const completion = asRecord(await upstream.json());
   const usage = extractTokenUsage(completion.usage);
