@@ -272,10 +272,42 @@ export class MetricsRegistry {
     gauge("remaining", "Remaining quota for the Copilot category.", (q) => q.remaining);
     gauge("entitlement", "Quota entitlement for the Copilot category.", (q) => q.entitlement);
     gauge("used", "Used quota (entitlement minus remaining) for the category.", (q) => q.used);
+    gauge("overage_count", "Overage count for the Copilot category.", (q) => q.overageCount);
+    gauge(
+      "overage_entitlement",
+      "Overage entitlement for the Copilot category.",
+      (q) => q.overageEntitlement,
+    );
     gauge(
       "percent_remaining",
       "Percent of quota remaining for the Copilot category.",
       (q) => q.percentRemaining,
+    );
+    booleanGauge(
+      "unlimited",
+      "Whether the Copilot quota category is unlimited.",
+      (q) => q.unlimited,
+    );
+    booleanGauge(
+      "overage_permitted",
+      "Whether overage is permitted for the Copilot category.",
+      (q) => q.overagePermitted,
+    );
+    booleanGauge("has_quota", "Whether the Copilot quota category has a quota.", (q) => q.hasQuota);
+    booleanGauge(
+      "token_based_billing",
+      "Whether the Copilot quota category uses token-based billing.",
+      (q) => q.tokenBasedBilling,
+    );
+    dateGauge(
+      "category_reset_timestamp_seconds",
+      "Unix epoch of the Copilot category-specific quota reset.",
+      (q) => q.quotaResetAt,
+    );
+    dateGauge(
+      "category_snapshot_timestamp_seconds",
+      "Unix epoch of the Copilot category quota snapshot.",
+      (q) => q.timestampUtc,
     );
 
     const resetMs = usage.quotaResetDate ? Date.parse(usage.quotaResetDate) : Number.NaN;
@@ -296,6 +328,42 @@ export class MetricsRegistry {
           plan: usage.plan ?? "",
         })} 1`,
       );
+    }
+
+    function booleanGauge(
+      suffix: string,
+      help: string,
+      pick: (quota: (typeof categories)[number][1]) => boolean | undefined,
+    ): void {
+      const present = categories.filter(([, quota]) => pick(quota) !== undefined);
+      if (present.length === 0) {
+        return;
+      }
+      lines.push(`# HELP hoopilot_copilot_quota_${suffix} ${help}`);
+      lines.push(`# TYPE hoopilot_copilot_quota_${suffix} gauge`);
+      for (const [category, quota] of present) {
+        lines.push(
+          `hoopilot_copilot_quota_${suffix}${labels({ category })} ${pick(quota) ? 1 : 0}`,
+        );
+      }
+    }
+
+    function dateGauge(
+      suffix: string,
+      help: string,
+      pick: (quota: (typeof categories)[number][1]) => string | undefined,
+    ): void {
+      const present = categories
+        .map(([category, quota]) => [category, Date.parse(pick(quota) ?? "")] as const)
+        .filter(([, timestamp]) => Number.isFinite(timestamp));
+      if (present.length === 0) {
+        return;
+      }
+      lines.push(`# HELP hoopilot_copilot_quota_${suffix} ${help}`);
+      lines.push(`# TYPE hoopilot_copilot_quota_${suffix} gauge`);
+      for (const [category, timestamp] of present) {
+        lines.push(`hoopilot_copilot_quota_${suffix}${labels({ category })} ${timestamp / 1000}`);
+      }
     }
   }
 }

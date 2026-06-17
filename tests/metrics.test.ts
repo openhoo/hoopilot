@@ -180,8 +180,16 @@ describe("MetricsRegistry", () => {
         quota_snapshots: {
           premium_interactions: {
             entitlement: 300,
+            has_quota: true,
+            overage_count: 2,
+            overage_entitlement: 10,
+            overage_permitted: true,
             percent_remaining: 88.5,
+            quota_id: "quota-premium",
+            quota_reset_at: "2026-07-01T00:00:00Z",
             remaining: 265.5,
+            timestamp_utc: "2026-06-17T12:00:00Z",
+            token_based_billing: false,
             unlimited: false,
           },
         },
@@ -198,6 +206,26 @@ describe("MetricsRegistry", () => {
     expect(text).toContain('hoopilot_copilot_quota_used{category="premium_interactions"} 34.5');
     expect(text).toContain(
       'hoopilot_copilot_quota_percent_remaining{category="premium_interactions"} 88.5',
+    );
+    expect(text).toContain(
+      'hoopilot_copilot_quota_overage_count{category="premium_interactions"} 2',
+    );
+    expect(text).toContain(
+      'hoopilot_copilot_quota_overage_entitlement{category="premium_interactions"} 10',
+    );
+    expect(text).toContain(
+      'hoopilot_copilot_quota_overage_permitted{category="premium_interactions"} 1',
+    );
+    expect(text).toContain('hoopilot_copilot_quota_has_quota{category="premium_interactions"} 1');
+    expect(text).toContain(
+      'hoopilot_copilot_quota_token_based_billing{category="premium_interactions"} 0',
+    );
+    expect(text).toContain('hoopilot_copilot_quota_unlimited{category="premium_interactions"} 0');
+    expect(text).toContain(
+      'hoopilot_copilot_quota_category_reset_timestamp_seconds{category="premium_interactions"} 1782864000',
+    );
+    expect(text).toContain(
+      'hoopilot_copilot_quota_category_snapshot_timestamp_seconds{category="premium_interactions"} 1781697600',
     );
     expect(text).toContain("hoopilot_copilot_quota_reset_timestamp_seconds ");
     expect(text).toContain(
@@ -324,9 +352,16 @@ describe("normalizeCopilotUsage", () => {
         chat: { unlimited: true },
         premium_interactions: {
           entitlement: 300,
+          has_quota: true,
           overage_count: 0,
+          overage_entitlement: 10,
           percent_remaining: 88.5,
+          quota_id: "quota-premium",
+          quota_remaining: 265.5,
+          quota_reset_at: "2026-07-01T00:00:00Z",
           remaining: 265.5,
+          timestamp_utc: "2026-06-17T12:00:00Z",
+          token_based_billing: false,
           unlimited: false,
         },
       },
@@ -336,10 +371,89 @@ describe("normalizeCopilotUsage", () => {
     expect(usage.quotaResetDate).toBe("2026-07-01");
     expect(usage.quotas.premium_interactions).toMatchObject({
       entitlement: 300,
+      hasQuota: true,
+      overageEntitlement: 10,
+      quotaId: "quota-premium",
+      quotaResetAt: "2026-07-01T00:00:00Z",
       remaining: 265.5,
+      timestampUtc: "2026-06-17T12:00:00Z",
+      tokenBasedBilling: false,
       used: 34.5,
     });
     expect(usage.quotas.chat).toEqual({ unlimited: true });
+  });
+
+  it("normalizes the live paid quota_snapshots shape from copilot_internal/user", () => {
+    const usage = normalizeCopilotUsage({
+      access_type_sku: "copilot_for_business_seat_quota",
+      chat_enabled: true,
+      copilot_plan: "business",
+      quota_reset_date: "2026-07-01",
+      quota_snapshots: {
+        chat: {
+          entitlement: 0,
+          has_quota: true,
+          overage_count: 0,
+          overage_entitlement: 0,
+          overage_permitted: false,
+          percent_remaining: 100,
+          quota_id: "quota-chat",
+          quota_remaining: 0,
+          quota_reset_at: "2026-07-01T00:00:00Z",
+          remaining: 0,
+          timestamp_utc: "2026-06-17T12:00:00Z",
+          token_based_billing: true,
+          unlimited: true,
+        },
+        premium_interactions: {
+          entitlement: 20000,
+          has_quota: true,
+          overage_count: 0,
+          overage_entitlement: 1000,
+          overage_permitted: true,
+          percent_remaining: 75.8,
+          quota_id: "quota-premium",
+          quota_remaining: 15165,
+          quota_reset_at: "2026-07-01T00:00:00Z",
+          remaining: 15165,
+          timestamp_utc: "2026-06-17T12:00:00Z",
+          token_based_billing: true,
+          unlimited: false,
+        },
+      },
+    });
+
+    expect(usage.accessTypeSku).toBe("copilot_for_business_seat_quota");
+    expect(usage.chatEnabled).toBe(true);
+    expect(usage.plan).toBe("business");
+    expect(usage.quotas.premium_interactions).toMatchObject({
+      entitlement: 20000,
+      hasQuota: true,
+      overageEntitlement: 1000,
+      overagePermitted: true,
+      percentRemaining: 75.8,
+      quotaId: "quota-premium",
+      quotaResetAt: "2026-07-01T00:00:00Z",
+      remaining: 15165,
+      timestampUtc: "2026-06-17T12:00:00Z",
+      tokenBasedBilling: true,
+      unlimited: false,
+      used: 4835,
+    });
+  });
+
+  it("uses overage_count when quota remaining is exhausted", () => {
+    const usage = normalizeCopilotUsage({
+      quota_snapshots: {
+        premium_interactions: {
+          entitlement: 300,
+          overage_count: 7,
+          remaining: 0,
+        },
+      },
+    });
+
+    expect(usage.quotas.premium_interactions).toMatchObject({ used: 307 });
   });
 
   it("normalizes the free-plan limited_user_quotas shape", () => {

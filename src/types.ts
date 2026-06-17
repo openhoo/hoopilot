@@ -99,10 +99,16 @@ export interface RequestObservation {
 /** One quota category (chat, completions, or premium_interactions/credits). */
 export interface CopilotQuota {
   entitlement?: number;
+  hasQuota?: boolean;
   overageCount?: number;
+  overageEntitlement?: number;
   overagePermitted?: boolean;
   percentRemaining?: number;
+  quotaId?: string;
+  quotaResetAt?: string;
   remaining?: number;
+  timestampUtc?: string;
+  tokenBasedBilling?: boolean;
   unlimited?: boolean;
   used?: number;
 }

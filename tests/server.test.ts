@@ -866,12 +866,13 @@ describe("metrics and usage endpoints", () => {
     const body = (await response.json()) as {
       copilot: { plan: string; quotas: Record<string, { used: number }> };
       object: string;
-      proxy: { uptimeSeconds: number };
+      proxy: { upstream: { errors: number; total: number }; uptimeSeconds: number };
     };
     expect(body.object).toBe("usage");
     expect(body.copilot.plan).toBe("individual_pro");
     expect(body.copilot.quotas.premium_interactions!.used).toBe(10);
     expect(typeof body.proxy.uptimeSeconds).toBe("number");
+    expect(body.proxy.upstream).toEqual({ errors: 0, total: 1 });
     // The quota call is recorded as an upstream request and cached for /metrics gauges.
     expect(metrics.snapshot().upstream).toEqual({ errors: 0, total: 1 });
     expect(metrics.renderPrometheus()).toContain(
@@ -981,10 +982,12 @@ describe("metrics and usage endpoints", () => {
   });
 
   it("reports missing credentials at /v1/usage without a 401", async () => {
+    const metrics = new MetricsRegistry();
     const handler = createHoopilotHandler({
       authStorePath: join(mkdtempSync(join(tmpdir(), "hoopilot-usage-noauth-")), "auth.json"),
       env: {},
       fetch: unusedFetch,
+      metrics,
     });
 
     const response = await handler(new Request("http://localhost/v1/usage"));
@@ -993,6 +996,7 @@ describe("metrics and usage endpoints", () => {
     const body = (await response.json()) as { copilot: unknown; copilot_error: string };
     expect(body.copilot).toBeNull();
     expect(body.copilot_error).toContain("hoopilot login");
+    expect(metrics.snapshot().upstream).toEqual({ errors: 0, total: 0 });
   });
 });
 

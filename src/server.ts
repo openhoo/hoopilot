@@ -700,8 +700,8 @@ async function handleUsage(
   readUsage: UsageReader,
   signal: AbortSignal,
 ): Promise<Response> {
-  const proxy = metrics.snapshot();
   const { copilot, error } = await readUsage(signal);
+  const proxy = metrics.snapshot();
   const body: JsonObject = { copilot: copilot ?? null, object: "usage", proxy };
   if (error) {
     body.copilot_error = error;
@@ -738,10 +738,10 @@ export function createUsageReader(
       metrics.recordCopilotQuota(value);
       return { copilot: value };
     } catch (error) {
-      metrics.recordUpstream(usagePath, false);
       if (error instanceof CopilotAuthError) {
         return { error: error.message };
       }
+      metrics.recordUpstream(usagePath, false);
       return { error: errorMessage(error) };
     }
   };

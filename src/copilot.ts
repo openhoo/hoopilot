@@ -202,28 +202,39 @@ export function normalizeCopilotUsage(body: unknown): CopilotUsage {
 
 function normalizeQuotaDetail(detail: JsonObject): CopilotQuota {
   const entitlement = numberOrUndefined(detail.entitlement);
+  const overageCount = numberOrUndefined(detail.overage_count);
   const remaining =
     numberOrUndefined(detail.remaining) ?? numberOrUndefined(detail.quota_remaining);
   return removeUndefinedQuota({
     entitlement,
-    overageCount: numberOrUndefined(detail.overage_count),
+    hasQuota: typeof detail.has_quota === "boolean" ? detail.has_quota : undefined,
+    overageCount,
+    overageEntitlement: numberOrUndefined(detail.overage_entitlement),
     overagePermitted:
       typeof detail.overage_permitted === "boolean" ? detail.overage_permitted : undefined,
     percentRemaining: numberOrUndefined(detail.percent_remaining),
+    quotaId: stringOrUndefined(detail.quota_id),
+    quotaResetAt: stringOrUndefined(detail.quota_reset_at),
     remaining,
+    timestampUtc: stringOrUndefined(detail.timestamp_utc),
+    tokenBasedBilling:
+      typeof detail.token_based_billing === "boolean" ? detail.token_based_billing : undefined,
     unlimited: typeof detail.unlimited === "boolean" ? detail.unlimited : undefined,
-    used: usedFrom(entitlement, remaining),
+    used: usedFrom(entitlement, remaining, overageCount),
   });
 }
 
 function usedFrom(
   entitlement: number | undefined,
   remaining: number | undefined,
+  overageCount?: number,
 ): number | undefined {
   if (entitlement === undefined || remaining === undefined) {
     return undefined;
   }
-  return Math.max(0, entitlement - remaining);
+  const base = entitlement - remaining;
+  const overage = remaining === 0 ? (overageCount ?? 0) : 0;
+  return Math.max(0, base + overage);
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
