@@ -29,6 +29,7 @@ const DEFAULT_PORT = 4141;
 const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
   "Browser-origin requests require HOOPILOT_API_KEY unless the Origin is loopback.";
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
+const JSON_OBJECT_MESSAGE = "Request body must be a JSON object.";
 const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const REQUEST_TOO_LARGE_MESSAGE = `Request body must be ${MAX_REQUEST_BODY_BYTES} bytes or smaller.`;
@@ -139,10 +140,10 @@ export function createHoopilotHandler(
         return finish(jsonError(401, "copilot_auth_error", error.message));
       }
       const message = errorMessage(error);
-      if (message === INVALID_JSON_MESSAGE) {
+      if (message === INVALID_JSON_MESSAGE || message === JSON_OBJECT_MESSAGE) {
         requestLogger.warn(
           { err: errorDetails(error), event: "http.request.failed" },
-          "request body was invalid json",
+          "request body was not usable json",
         );
         return finish(jsonError(400, "invalid_request_error", message));
       } else if (error instanceof OpenAICompatibilityError) {
@@ -336,21 +337,26 @@ function proxyResponse(upstream: Response): Response {
 
 async function readJson(request: Request): Promise<JsonObject> {
   const text = await readRequestText(request);
+  return parseJsonObject(text);
+}
+
+function parseJsonObject(text: string): JsonObject {
+  let parsed: unknown;
   try {
-    return asRecord(JSON.parse(text));
+    parsed = JSON.parse(text);
   } catch {
     throw new Error(INVALID_JSON_MESSAGE);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(JSON_OBJECT_MESSAGE);
+  }
+  return parsed as JsonObject;
 }
 
 async function readJsonText(request: Request): Promise<string> {
   const text = await readRequestText(request);
-  try {
-    JSON.parse(text);
-    return text;
-  } catch {
-    throw new Error(INVALID_JSON_MESSAGE);
-  }
+  parseJsonObject(text);
+  return text;
 }
 
 async function readRequestText(request: Request): Promise<string> {

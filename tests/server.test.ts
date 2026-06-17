@@ -648,6 +648,37 @@ describe("createHoopilotHandler", () => {
     expect(JSON.stringify(logs.entries)).not.toContain("secret prompt text");
   });
 
+  it("rejects non-object JSON bodies before proxying upstream", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => {
+        calls += 1;
+        return Response.json({});
+      }),
+    );
+
+    for (const [path, body] of [
+      ["/v1/chat/completions", "[]"],
+      ["/v1/responses", JSON.stringify("hello")],
+    ]) {
+      const response = await handler(
+        new Request(`http://localhost${path}`, {
+          body,
+          method: "POST",
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: "invalid_request_error",
+          message: "Request body must be a JSON object.",
+        },
+      });
+    }
+    expect(calls).toBe(0);
+  });
+
   it("rejects oversized JSON bodies before proxying upstream", async () => {
     let calls = 0;
     const handler = createHoopilotHandler(
