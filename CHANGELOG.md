@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.5 (2026-06-17)
+
+### Bug Fixes
+
+- align copilot quota metrics with live api (b88aeb4)
+
 ## 0.7.4 (2026-06-17)
 
 ### Bug Fixes
