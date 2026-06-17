@@ -71,7 +71,9 @@ describe("createHoopilotHandler", () => {
       }),
     );
     expect(options.status).toBe(200);
+    expect(options.headers.get("access-control-allow-headers")).toContain("x-request-id");
     expect(options.headers.get("access-control-allow-origin")).toBe("*");
+    expect(options.headers.get("access-control-expose-headers")).toBe("x-request-id");
 
     const missing = await handler(new Request("http://localhost/missing"));
     expect(missing.status).toBe(404);
@@ -133,6 +135,7 @@ describe("createHoopilotHandler", () => {
     );
 
     expect(response.headers.get("x-request-id")).toBe("req-test");
+    expect(response.headers.get("access-control-expose-headers")).toBe("x-request-id");
     expect(logs.entries).toContainEqual(
       expect.objectContaining({
         fields: expect.objectContaining({

@@ -432,9 +432,10 @@ function websocketUnsupportedResponse(): Response {
 
 function corsHeaders(): Record<string, string> {
   return {
-    "access-control-allow-headers": "authorization, content-type, x-api-key",
+    "access-control-allow-headers": "authorization, content-type, x-api-key, x-request-id",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-origin": "*",
+    "access-control-expose-headers": "x-request-id",
   };
 }
 
