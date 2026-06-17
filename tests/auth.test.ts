@@ -40,6 +40,25 @@ describe("CopilotAuth", () => {
     expect(access.apiBaseUrl).toBe("https://api.githubcopilot.override");
   });
 
+  it("lets an explicit Copilot API base URL override the stored URL", async () => {
+    const path = tempAuthPath();
+    writeStoredCopilotAuth(
+      {
+        apiBaseUrl: "https://api.githubcopilot.old/",
+        token: "oauth-token",
+      },
+      path,
+    );
+
+    const access = await new CopilotAuth({
+      authStorePath: path,
+      copilotApiBaseUrl: "https://api.githubcopilot.new/",
+      env: {},
+    }).getAccess();
+
+    expect(access.apiBaseUrl).toBe("https://api.githubcopilot.new");
+  });
+
   it("supports HOOPILOT_AUTH_FILE for the OAuth credential store", async () => {
     const path = tempAuthPath();
     writeStoredCopilotAuth({ token: "oauth-token" }, path);

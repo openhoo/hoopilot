@@ -20,10 +20,14 @@ export class CopilotAuthError extends Error {
 export class CopilotAuth {
   readonly #authStorePath?: string;
   readonly #copilotApiBaseUrl: string;
+  readonly #hasCopilotApiBaseUrlOverride: boolean;
   #cachedAccess?: CopilotAccess;
 
   constructor(options: CopilotAuthOptions = {}) {
     this.#authStorePath = options.authStorePath ?? options.env?.HOOPILOT_AUTH_FILE;
+    this.#hasCopilotApiBaseUrlOverride = Boolean(
+      options.copilotApiBaseUrl ?? options.env?.COPILOT_API_BASE_URL,
+    );
     this.#copilotApiBaseUrl = trimTrailingSlash(
       options.copilotApiBaseUrl ??
         options.env?.COPILOT_API_BASE_URL ??
@@ -47,7 +51,11 @@ export class CopilotAuth {
     }
     if (stored) {
       return this.#cacheAccess({
-        apiBaseUrl: trimTrailingSlash(stored.apiBaseUrl ?? this.#copilotApiBaseUrl),
+        apiBaseUrl: trimTrailingSlash(
+          this.#hasCopilotApiBaseUrlOverride
+            ? this.#copilotApiBaseUrl
+            : (stored.apiBaseUrl ?? this.#copilotApiBaseUrl),
+        ),
         expiresAtMs: Date.now() + STORED_TOKEN_TTL_MS,
         source: "github-copilot-oauth",
         token: stored.token,
