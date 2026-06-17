@@ -86,8 +86,8 @@ describe("createHoopilotHandler", () => {
     });
 
     for (const headers of [
-      { origin: "https://evil.example" },
-      { "sec-fetch-site": "cross-site" },
+      new Headers({ origin: "https://evil.example" }),
+      new Headers({ "sec-fetch-site": "cross-site" }),
     ]) {
       const response = await handler(
         new Request("http://localhost/v1/models", {

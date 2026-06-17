@@ -51,15 +51,16 @@ export function readStoredCopilotAuth(path = authStorePath()): StoredCopilotAuth
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new StoredCopilotAuthError(`Hoopilot auth file at ${path} must contain a JSON object.`);
   }
-  const token = typeof parsed.token === "string" ? parsed.token.trim() : "";
+  const record = parsed as Record<string, unknown>;
+  const token = typeof record.token === "string" ? record.token.trim() : "";
   if (!token) {
     throw new StoredCopilotAuthError(`Hoopilot auth file at ${path} does not contain a token.`);
   }
   return {
-    apiBaseUrl: typeof parsed.apiBaseUrl === "string" ? parsed.apiBaseUrl : undefined,
-    createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : undefined,
-    githubDomain: typeof parsed.githubDomain === "string" ? parsed.githubDomain : undefined,
-    source: typeof parsed.source === "string" ? parsed.source : undefined,
+    apiBaseUrl: typeof record.apiBaseUrl === "string" ? record.apiBaseUrl : undefined,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
+    githubDomain: typeof record.githubDomain === "string" ? record.githubDomain : undefined,
+    source: typeof record.source === "string" ? record.source : undefined,
     token,
   };
 }
