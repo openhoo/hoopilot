@@ -235,6 +235,27 @@ describe("completions compatibility", () => {
     expect(text).toContain('"finish_reason":"stop"');
     expect(text).not.toContain('"delta"');
   });
+
+  it("forwards upstream streaming errors instead of synthesizing a clean done event", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'event: error\ndata: {"error":{"message":"boom","type":"server_error"}}\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const text = await new Response(completionStreamFromChatStream(source)).text();
+
+    expect(text).toContain('"error"');
+    expect(text).toContain('"message":"boom"');
+    expect(text).toContain('"type":"server_error"');
+    expect(text).not.toContain("[DONE]");
+    expect(text).not.toContain('"object":"text_completion"');
+  });
 });
 
 describe("normalizeModelsResponse", () => {

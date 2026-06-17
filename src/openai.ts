@@ -125,12 +125,15 @@ export function completionStreamFromChatStream(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let buffer = "";
-  let sawDone = false;
+  let sawTerminalEvent = false;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueue = (data: JsonObject | "[DONE]") => {
         controller.enqueue(encoder.encode(encodeDataSse(data)));
+      };
+      const markTerminal = () => {
+        sawTerminalEvent = true;
       };
       const reader = chatStream.getReader();
       try {
@@ -140,20 +143,17 @@ export function completionStreamFromChatStream(
             break;
           }
           buffer += decoder.decode(result.value, { stream: true });
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            processCompletionSseLine(line, enqueue, () => {
-              sawDone = true;
-            });
+          const blocks = buffer.split(/\r?\n\r?\n/);
+          buffer = blocks.pop() ?? "";
+          for (const block of blocks) {
+            processCompletionSseBlock(block, enqueue, markTerminal);
           }
         }
-        if (buffer) {
-          processCompletionSseLine(buffer, enqueue, () => {
-            sawDone = true;
-          });
+        const tail = `${buffer}${decoder.decode()}`;
+        if (tail.trim()) {
+          processCompletionSseBlock(tail, enqueue, markTerminal);
         }
-        if (!sawDone) {
+        if (!sawTerminalEvent) {
           enqueue("[DONE]");
         }
         controller.close();
@@ -687,27 +687,39 @@ function firstChoice(completion: JsonObject): Record<string, unknown> {
   return asRecord(choices[0]);
 }
 
-function processCompletionSseLine(
-  line: string,
+function processCompletionSseBlock(
+  block: string,
   enqueue: (data: JsonObject | "[DONE]") => void,
-  markDone: () => void,
+  markTerminal: () => void,
 ): void {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) {
-    return;
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("event:")) {
+      event = trimmed.slice("event:".length).trim() || event;
+    } else if (trimmed.startsWith("data:")) {
+      dataLines.push(trimmed.slice("data:".length).trim());
+    }
   }
-  const data = trimmed.slice("data:".length).trim();
+  const data = dataLines.join("\n");
   if (!data) {
     return;
   }
   if (data === "[DONE]") {
-    markDone();
+    markTerminal();
     enqueue("[DONE]");
     return;
   }
 
   const parsed = parseJson(data);
   if (!parsed) {
+    return;
+  }
+  const error = completionStreamError(event, parsed);
+  if (error) {
+    markTerminal();
+    enqueue({ error });
     return;
   }
   const choice = firstChoice(parsed);
@@ -740,6 +752,28 @@ function processCompletionSseLine(
       usage: hasUsage ? usage : undefined,
     }),
   );
+}
+
+function completionStreamError(event: string, parsed: JsonObject): JsonObject | undefined {
+  const responseError = asRecord(asRecord(parsed.response).error);
+  const directError = asRecord(parsed.error);
+  const error =
+    Object.keys(directError).length > 0
+      ? directError
+      : Object.keys(responseError).length > 0
+        ? responseError
+        : undefined;
+  if (error) {
+    return error;
+  }
+  if (event === "error" || parsed.type === "response.failed") {
+    return removeUndefined({
+      code: contentToText(parsed.code) || undefined,
+      message: contentToText(parsed.message) || "Upstream streaming request failed.",
+      type: contentToText(parsed.type) || "upstream_stream_error",
+    });
+  }
+  return undefined;
 }
 
 function processChatSseLine(
