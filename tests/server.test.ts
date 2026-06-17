@@ -76,6 +76,47 @@ describe("createHoopilotHandler", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("blocks unauthenticated cross-site browser requests before upstream auth is used", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => {
+        calls += 1;
+        return Response.json({ data: [{ id: "gpt-4.1" }] });
+      }),
+    });
+
+    for (const headers of [
+      { origin: "https://evil.example" },
+      { "sec-fetch-site": "cross-site" },
+    ]) {
+      const response = await handler(
+        new Request("http://localhost/v1/models", {
+          headers,
+        }),
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "forbidden_origin" },
+      });
+    }
+    expect(calls).toBe(0);
+  });
+
+  it("allows unauthenticated loopback browser origins", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => Response.json({ data: [{ id: "gpt-4.1" }] })),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: { origin: "http://localhost:3000" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("adds request ids and emits structured request completion logs", async () => {
     const logs = captureLogger();
     const handler = createHoopilotHandler({

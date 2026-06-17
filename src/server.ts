@@ -24,6 +24,8 @@ import { asRecord } from "./util";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
+const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
+  "Browser-origin requests require HOOPILOT_API_KEY unless the Origin is loopback.";
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
 const USAGE_CACHE_TTL_MS = 60_000;
 
@@ -67,6 +69,15 @@ export function createHoopilotHandler(
         route,
         startedAt,
       });
+
+    const browserOrigin = forbiddenBrowserOrigin(request, apiKey);
+    if (browserOrigin) {
+      requestLogger.warn(
+        { event: "http.request.forbidden_origin", origin: browserOrigin },
+        "blocked unauthenticated browser-origin request",
+      );
+      return finish(jsonError(403, "forbidden_origin", FORBIDDEN_BROWSER_ORIGIN_MESSAGE));
+    }
 
     if (request.method === "OPTIONS") {
       return finish(new Response(null, { headers: corsHeaders() }));
@@ -356,6 +367,20 @@ function isAuthorized(request: Request, apiKey: string | undefined): boolean {
   return bearer === apiKey || request.headers.get("x-api-key") === apiKey;
 }
 
+function forbiddenBrowserOrigin(request: Request, apiKey: string | undefined): string | undefined {
+  if (apiKey) {
+    return undefined;
+  }
+
+  const origin = request.headers.get("origin")?.trim();
+  if (origin) {
+    return isLoopbackOrigin(origin) ? undefined : origin;
+  }
+
+  const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  return fetchSite === "cross-site" ? "cross-site" : undefined;
+}
+
 function isUpstreamAuthStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
@@ -365,7 +390,15 @@ function upstreamAuthMessage(message: string): string {
 }
 
 function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    return isLoopbackHost(new URL(origin).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function errorMessage(error: unknown): string {
