@@ -147,47 +147,56 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
-    const [name, inlineValue] = splitOption(arg);
-    const value = inlineValue ?? rest.shift();
-    if (!value) {
-      throw new Error(`Missing value for ${arg}.`);
+    if (!arg.startsWith("-")) {
+      throw new Error(`Unknown argument: ${arg}.`);
     }
 
+    const [name, inlineValue] = splitOption(arg);
     switch (name) {
       case "--api-key":
-        args.apiKey = value;
+        args.apiKey = optionValue(name, inlineValue, rest);
         break;
       case "--api-key-file":
-        args.apiKey = readApiKeyFile(value);
+        args.apiKey = readApiKeyFile(optionValue(name, inlineValue, rest));
         break;
       case "--auth-file":
-        args.authStorePath = value;
+        args.authStorePath = optionValue(name, inlineValue, rest);
         break;
       case "--copilot-api-base-url":
-        args.copilotApiBaseUrl = value;
+        args.copilotApiBaseUrl = optionValue(name, inlineValue, rest);
         break;
       case "--log-format":
-        args.logFormat = parseLogFormat(value);
+        args.logFormat = parseLogFormat(optionValue(name, inlineValue, rest));
         break;
       case "--log-level":
-        args.logLevel = parseLogLevel(value);
+        args.logLevel = parseLogLevel(optionValue(name, inlineValue, rest));
         break;
       case "--host":
-        args.host = value;
+        args.host = optionValue(name, inlineValue, rest);
         break;
       case "--port":
-      case "-p":
+      case "-p": {
+        const value = optionValue(name, inlineValue, rest);
         args.port = Number(value);
         if (!Number.isInteger(args.port) || args.port <= 0 || args.port > 65_535) {
           throw new Error(`Invalid port: ${value}.`);
         }
         break;
+      }
       default:
         throw new Error(`Unknown option: ${name}.`);
     }
   }
 
   return args;
+}
+
+function optionValue(name: string, inlineValue: string | undefined, rest: string[]): string {
+  const value = inlineValue ?? rest.shift();
+  if (!value) {
+    throw new Error(`Missing value for ${name}.`);
+  }
+  return value;
 }
 
 function splitOption(arg: string): [string, string | undefined] {

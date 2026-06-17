@@ -67,6 +67,13 @@ describe("parseArgs", () => {
     }
   });
 
+  it("rejects stray arguments and unknown flags without consuming following tokens", () => {
+    expect(() => parseArgs(["serve", "prompt"])).toThrow("Unknown argument: prompt");
+    expect(() => parseArgs(["unknown-command"])).toThrow("Unknown argument: unknown-command");
+    expect(() => parseArgs(["--bogus"])).toThrow("Unknown option: --bogus");
+    expect(() => parseArgs(["--bogus", "value"])).toThrow("Unknown option: --bogus");
+  });
+
   it("rejects invalid logging options", () => {
     expect(() => parseArgs(["--log-level", "verbose"])).toThrow("Invalid log level");
     expect(() => parseArgs(["--log-format", "text"])).toThrow("Invalid log format");
