@@ -1,5 +1,28 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.2 (2026-06-17)
+
+### Bug Fixes
+
+- guard copilot token targets (b4ed6b4)
+- block browser-origin proxy abuse (e4d35e3)
+- preserve equals in cli options (454c8f0)
+- report invalid auth files (a6899b8)
+- validate port ranges (9545072)
+- convert streamed completions chunks (aafa600)
+- align responses stream events (c08f0a1)
+- preserve upstream error objects (1ecc72d)
+- complete converted response usage (534bc07)
+- delegate standalone codexx shims (4aedc0e)
+- support api key files (8bd0793)
+- satisfy strict review typings (98b4fc4)
+
+### Other Changes
+
+- refresh env and install examples (1d4d9c0)
+- skip stale release runs (7882cd4)
+- track release hooversion updates (b8866a9)
+
 ## 0.7.1 (2026-06-16)
 
 ### Bug Fixes
