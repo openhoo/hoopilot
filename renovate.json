@@ -5,7 +5,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/(ci|release)\\.yml$/"],
       "matchStrings": ["HOOVERSION_VERSION:\\s*[\"']?(?<currentValue>[^\\s\"']+)[\"']?"],
       "depNameTemplate": "@openhoo/hooversion",
       "packageNameTemplate": "@openhoo/hooversion",
