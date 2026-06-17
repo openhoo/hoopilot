@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CopilotAuth } from "../src/auth";
@@ -72,6 +72,18 @@ describe("CopilotAuth", () => {
         env: {},
       }).getAccess(),
     ).rejects.toThrow("hoopilot login");
+  });
+
+  it("reports malformed OAuth credential files distinctly from missing credentials", async () => {
+    const path = tempAuthPath();
+    writeFileSync(path, "{not-json", "utf8");
+
+    await expect(
+      new CopilotAuth({
+        authStorePath: path,
+        env: {},
+      }).getAccess(),
+    ).rejects.toThrow("is not valid JSON");
   });
 });
 

@@ -1,4 +1,8 @@
-import { readStoredCopilotAuth } from "./auth-store";
+import {
+  readStoredCopilotAuth,
+  type StoredCopilotAuth,
+  StoredCopilotAuthError,
+} from "./auth-store";
 import type { CopilotAccess, CopilotAuthOptions } from "./types";
 import { trimTrailingSlash } from "./util";
 
@@ -32,7 +36,15 @@ export class CopilotAuth {
       return this.#cachedAccess;
     }
 
-    const stored = readStoredCopilotAuth(this.#authStorePath);
+    let stored: StoredCopilotAuth | undefined;
+    try {
+      stored = readStoredCopilotAuth(this.#authStorePath);
+    } catch (error) {
+      if (error instanceof StoredCopilotAuthError) {
+        throw new CopilotAuthError(error.message);
+      }
+      throw error;
+    }
     if (stored) {
       return this.#cacheAccess({
         apiBaseUrl: trimTrailingSlash(stored.apiBaseUrl ?? this.#copilotApiBaseUrl),
