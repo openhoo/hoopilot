@@ -13,7 +13,7 @@ describe("parseArgs", () => {
         "serve",
         "--auth-file",
         "/tmp/hoopilot-auth.json",
-        "--copilot-api-base-url=https://api.githubcopilot.example",
+        "--copilot-api-base-url=https://api.githubcopilot.com",
         "--log-format",
         "pretty",
         "--log-level=debug",
@@ -22,7 +22,7 @@ describe("parseArgs", () => {
       ]),
     ).toMatchObject({
       authStorePath: "/tmp/hoopilot-auth.json",
-      copilotApiBaseUrl: "https://api.githubcopilot.example",
+      copilotApiBaseUrl: "https://api.githubcopilot.com",
       logFormat: "pretty",
       logLevel: "debug",
       port: 4242,
@@ -33,11 +33,11 @@ describe("parseArgs", () => {
     expect(
       parseArgs([
         "--api-key=abc=def",
-        "--copilot-api-base-url=https://api.githubcopilot.example/models?token=a=b",
+        "--copilot-api-base-url=https://api.githubcopilot.com/models?token=a=b",
       ]),
     ).toMatchObject({
       apiKey: "abc=def",
-      copilotApiBaseUrl: "https://api.githubcopilot.example/models?token=a=b",
+      copilotApiBaseUrl: "https://api.githubcopilot.com/models?token=a=b",
     });
   });
 
@@ -114,18 +114,35 @@ describe("verifyCopilotOAuthToken", () => {
     };
 
     const access = await verifyCopilotOAuthToken("oauth-token", {
-      copilotApiBaseUrl: "https://api.githubcopilot.example/",
+      copilotApiBaseUrl: "https://api.githubcopilot.com/",
       fetch: fetcher,
     });
 
     expect(access).toMatchObject({
-      apiBaseUrl: "https://api.githubcopilot.example",
+      apiBaseUrl: "https://api.githubcopilot.com",
       source: "github-copilot-oauth",
       token: "oauth-token",
     });
-    expect(requests[0]!.url).toBe("https://api.githubcopilot.example/models");
+    expect(requests[0]!.url).toBe("https://api.githubcopilot.com/models");
     expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
     expect(requests[0]!.headers.get("x-github-api-version")).toBe("2026-06-01");
+  });
+
+  it("allows custom HTTPS Copilot hosts only with the unsafe upstream opt-in", async () => {
+    const requests: Request[] = [];
+
+    const access = await verifyCopilotOAuthToken("oauth-token", {
+      copilotApiBaseUrl: "https://api.githubcopilot.example/",
+      env: { HOOPILOT_ALLOW_UNSAFE_UPSTREAM: "1" },
+      fetch: async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({ data: [{ id: "gpt-5.5" }] });
+      },
+    });
+
+    expect(access.apiBaseUrl).toBe("https://api.githubcopilot.example");
+    expect(requests[0]!.url).toBe("https://api.githubcopilot.example/models");
+    expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
   });
 
   it("reports Copilot auth failures as auth errors", async () => {
@@ -138,19 +155,21 @@ describe("verifyCopilotOAuthToken", () => {
     ).rejects.toThrow("GitHub Copilot API verification failed with 403");
   });
 
-  it("does not send OAuth tokens to plaintext non-loopback Copilot API URLs", async () => {
-    let calls = 0;
+  it("does not send OAuth tokens to untrusted Copilot API URLs", async () => {
+    for (const copilotApiBaseUrl of ["http://copilot.internal", "https://evil.example"]) {
+      let calls = 0;
 
-    await expect(
-      verifyCopilotOAuthToken("oauth-token", {
-        copilotApiBaseUrl: "http://copilot.internal",
-        fetch: async () => {
-          calls += 1;
-          return Response.json({});
-        },
-      }),
-    ).rejects.toThrow("Refusing to send the GitHub OAuth token to a non-HTTPS host");
-    expect(calls).toBe(0);
+      await expect(
+        verifyCopilotOAuthToken("oauth-token", {
+          copilotApiBaseUrl,
+          fetch: async () => {
+            calls += 1;
+            return Response.json({});
+          },
+        }),
+      ).rejects.toThrow("Refusing to send the GitHub OAuth token to an untrusted Copilot API host");
+      expect(calls).toBe(0);
+    }
   });
 });
 
@@ -161,7 +180,7 @@ describe("runModels", () => {
       const authPath = join(dir, "auth.json");
       writeStoredCopilotAuth(
         {
-          apiBaseUrl: "https://api.githubcopilot.example",
+          apiBaseUrl: "https://api.githubcopilot.com",
           token: "oauth-token",
         },
         authPath,
@@ -187,7 +206,7 @@ describe("runModels", () => {
       }
 
       expect(lines).toEqual(["gpt-4.1", "gpt-5.5"]);
-      expect(requests[0]!.url).toBe("https://api.githubcopilot.example/models");
+      expect(requests[0]!.url).toBe("https://api.githubcopilot.com/models");
       expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
     } finally {
       rmSync(dir, { force: true, recursive: true });
@@ -254,6 +273,29 @@ describe("runUsage", () => {
       await expect(runUsage({ authStorePath: authPath, fetch: fetcher })).rejects.toThrow(
         "GitHub Copilot usage request failed with 403",
       );
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not send OAuth tokens to untrusted GitHub usage API URLs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-usage-host-fail-"));
+    try {
+      const authPath = join(dir, "auth.json");
+      writeStoredCopilotAuth({ token: "oauth-token" }, authPath);
+      let calls = 0;
+
+      await expect(
+        runUsage({
+          authStorePath: authPath,
+          fetch: async () => {
+            calls += 1;
+            return Response.json({});
+          },
+          githubApiBaseUrl: "https://evil.example",
+        }),
+      ).rejects.toThrow("Refusing to send the GitHub OAuth token to an untrusted GitHub API host");
+      expect(calls).toBe(0);
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

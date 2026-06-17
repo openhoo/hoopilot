@@ -6,10 +6,12 @@ import type {
   FetchLike,
   JsonObject,
 } from "./types";
-import { asRecord, envValue, isHttpsOrLoopbackUrl, trimTrailingSlash } from "./util";
+import { asRecord, envValue, isTrustedTokenBaseUrl, trimTrailingSlash } from "./util";
 
 /** Default GitHub REST host that serves the `copilot_internal/user` quota route. */
 export const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
+const ALLOWED_COPILOT_API_HOSTS = ["api.githubcopilot.com"] as const;
+const ALLOWED_GITHUB_API_HOSTS = ["api.github.com"] as const;
 
 /**
  * API version sent to the GitHub `copilot_internal` endpoints. This is a
@@ -54,11 +56,13 @@ export function applyGithubApiHeaders(headers: Headers, token: string): Headers 
 
 export class CopilotClient {
   readonly #auth: CopilotAuth;
+  readonly #allowUnsafeUpstream: boolean;
   readonly #fetch: FetchLike;
   readonly #githubApiBaseUrl: string;
 
   constructor(options: CopilotAuthOptions = {}) {
     this.#auth = new CopilotAuth(options);
+    this.#allowUnsafeUpstream = envValue(options.env?.HOOPILOT_ALLOW_UNSAFE_UPSTREAM) === "1";
     this.#fetch = options.fetch ?? fetch;
     this.#githubApiBaseUrl = trimTrailingSlash(
       options.githubApiBaseUrl ??
@@ -76,9 +80,15 @@ export class CopilotClient {
     // The quota call sends the raw, long-lived OAuth token. Never transmit it
     // over plaintext to a non-loopback host, so a misconfigured base URL cannot
     // exfiltrate the credential.
-    if (!isHttpsOrLoopbackUrl(this.#githubApiBaseUrl)) {
+    if (
+      !isTrustedTokenBaseUrl(
+        this.#githubApiBaseUrl,
+        ALLOWED_GITHUB_API_HOSTS,
+        this.#allowUnsafeUpstream,
+      )
+    ) {
       throw new Error(
-        `Refusing to send the GitHub OAuth token to a non-HTTPS host: ${this.#githubApiBaseUrl}`,
+        `Refusing to send the GitHub OAuth token to an untrusted GitHub API host: ${this.#githubApiBaseUrl}`,
       );
     }
     const access = await this.#auth.getAccess();
@@ -124,9 +134,15 @@ export class CopilotClient {
 
   async fetchCopilot(path: string, init: RequestInit): Promise<Response> {
     const access = await this.#auth.getAccess();
-    if (!isHttpsOrLoopbackUrl(access.apiBaseUrl)) {
+    if (
+      !isTrustedTokenBaseUrl(
+        access.apiBaseUrl,
+        ALLOWED_COPILOT_API_HOSTS,
+        this.#allowUnsafeUpstream,
+      )
+    ) {
       throw new Error(
-        `Refusing to send the GitHub OAuth token to a non-HTTPS host: ${access.apiBaseUrl}`,
+        `Refusing to send the GitHub OAuth token to an untrusted Copilot API host: ${access.apiBaseUrl}`,
       );
     }
     const headers = applyCopilotHeaders(new Headers(init.headers), access.token);

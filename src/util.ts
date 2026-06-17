@@ -13,15 +13,50 @@ export function envValue(value: string | undefined): string | undefined {
 
 /** True for HTTPS URLs, or HTTP only on loopback hosts used by local tests/dev. */
 export function isHttpsOrLoopbackUrl(rawUrl: string): boolean {
+  const url = parseUrl(rawUrl);
+  if (!url) {
+    return false;
+  }
+  return url.protocol === "https:" || isLoopbackHttpUrl(url);
+}
+
+/** Validate a base URL before sending a bearer/OAuth token to it. */
+export function isTrustedTokenBaseUrl(
+  rawUrl: string,
+  allowedHttpsHosts: readonly string[],
+  allowUnsafeHttps = false,
+): boolean {
+  const url = parseUrl(rawUrl);
+  if (!url) {
+    return false;
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    return false;
+  }
+  if (url.pathname !== "" && url.pathname !== "/") {
+    return false;
+  }
+  if (isLoopbackHttpUrl(url)) {
+    return true;
+  }
+  if (url.protocol !== "https:") {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  return allowedHttpsHosts.includes(host) || allowUnsafeHttps;
+}
+
+function parseUrl(rawUrl: string): URL | undefined {
   let url: URL;
   try {
     url = new URL(rawUrl);
   } catch {
-    return false;
+    return undefined;
   }
-  if (url.protocol === "https:") {
-    return true;
-  }
+  return url;
+}
+
+function isLoopbackHttpUrl(url: URL): boolean {
   return (
     url.protocol === "http:" &&
     (url.hostname === "127.0.0.1" ||

@@ -21,7 +21,7 @@ import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
 import {
   asRecord,
   envValue,
-  isHttpsOrLoopbackUrl,
+  isTrustedTokenBaseUrl,
   trimTrailingSlash,
   truncatedResponseText,
 } from "./util";
@@ -38,6 +38,8 @@ interface VerifyCopilotOAuthTokenOptions {
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
 }
+
+const ALLOWED_COPILOT_API_HOSTS = ["api.githubcopilot.com"] as const;
 
 export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   // Clear any leftover ".old" binary from a prior Windows self-update.
@@ -383,8 +385,11 @@ export async function verifyCopilotOAuthToken(
       envValue(options.env?.COPILOT_API_BASE_URL) ??
       DEFAULT_COPILOT_API_BASE_URL,
   );
-  if (!isHttpsOrLoopbackUrl(apiBaseUrl)) {
-    throw new Error(`Refusing to send the GitHub OAuth token to a non-HTTPS host: ${apiBaseUrl}`);
+  const allowUnsafeUpstream = envValue(options.env?.HOOPILOT_ALLOW_UNSAFE_UPSTREAM) === "1";
+  if (!isTrustedTokenBaseUrl(apiBaseUrl, ALLOWED_COPILOT_API_HOSTS, allowUnsafeUpstream)) {
+    throw new Error(
+      `Refusing to send the GitHub OAuth token to an untrusted Copilot API host: ${apiBaseUrl}`,
+    );
   }
   const fetcher = options.fetch ?? fetch;
   const response = await fetcher(`${apiBaseUrl}/models`, {
@@ -502,6 +507,7 @@ Environment:
   HOOPILOT_LOG_LEVEL                trace, debug, info, warn, error, fatal, or silent
   COPILOT_API_BASE_URL
   HOOPILOT_GITHUB_API_BASE_URL      GitHub REST base for the usage/quota lookup. Default: https://api.github.com
+  HOOPILOT_ALLOW_UNSAFE_UPSTREAM    Set to 1 to allow nonstandard HTTPS token hosts
   HOOPILOT_NO_UPDATE_CHECK          Set to disable update checks (also NO_UPDATE_NOTIFIER)
 `;
 }

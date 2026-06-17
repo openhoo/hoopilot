@@ -473,34 +473,36 @@ describe("createHoopilotHandler", () => {
     });
   });
 
-  it("does not send stored OAuth tokens to plaintext non-loopback Copilot API URLs", async () => {
-    const path = tempAuthPath();
-    writeStoredCopilotAuth({ apiBaseUrl: "http://copilot.internal", token: "oauth-token" }, path);
-    let calls = 0;
-    const handler = createHoopilotHandler({
-      authStorePath: path,
-      env: {},
-      fetch: async () => {
-        calls += 1;
-        return Response.json({});
-      },
-    });
+  it("does not send stored OAuth tokens to untrusted Copilot API URLs", async () => {
+    for (const apiBaseUrl of ["http://copilot.internal", "https://evil.example"]) {
+      const path = tempAuthPath();
+      writeStoredCopilotAuth({ apiBaseUrl, token: "oauth-token" }, path);
+      let calls = 0;
+      const handler = createHoopilotHandler({
+        authStorePath: path,
+        env: {},
+        fetch: async () => {
+          calls += 1;
+          return Response.json({});
+        },
+      });
 
-    const response = await handler(
-      new Request("http://localhost/v1/chat/completions", {
-        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
-        method: "POST",
-      }),
-    );
+      const response = await handler(
+        new Request("http://localhost/v1/chat/completions", {
+          body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
+          method: "POST",
+        }),
+      );
 
-    expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toMatchObject({
-      error: {
-        code: "internal_error",
-        message: expect.stringContaining("Refusing to send the GitHub OAuth token"),
-      },
-    });
-    expect(calls).toBe(0);
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: "internal_error",
+          message: expect.stringContaining("Refusing to send the GitHub OAuth token"),
+        },
+      });
+      expect(calls).toBe(0);
+    }
   });
 
   it("normalizes model responses", async () => {

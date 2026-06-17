@@ -184,6 +184,7 @@ Supported authentication-related settings:
 - `HOOPILOT_GITHUB_DOMAIN`: GitHub domain override. Default: `github.com`.
 - `COPILOT_API_BASE_URL`: upstream Copilot API base URL override. Default: `https://api.githubcopilot.com`.
 - `HOOPILOT_GITHUB_API_BASE_URL`: GitHub REST API base URL used for the Copilot quota lookup. Default: `https://api.github.com`.
+- `HOOPILOT_ALLOW_UNSAFE_UPSTREAM=1`: allow sending the stored OAuth token to nonstandard HTTPS Copilot/GitHub API hosts. Use only for trusted test or enterprise endpoints.
 
 ## Codex Auth Errors
 
