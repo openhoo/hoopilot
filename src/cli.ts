@@ -169,7 +169,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--port":
       case "-p":
         args.port = Number(value);
-        if (!Number.isInteger(args.port) || args.port <= 0) {
+        if (!Number.isInteger(args.port) || args.port <= 0 || args.port > 65_535) {
           throw new Error(`Invalid port: ${value}.`);
         }
         break;

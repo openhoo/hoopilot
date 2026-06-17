@@ -57,6 +57,11 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--log-level", "verbose"])).toThrow("Invalid log level");
     expect(() => parseArgs(["--log-format", "text"])).toThrow("Invalid log format");
   });
+
+  it("rejects ports outside the TCP range", () => {
+    expect(() => parseArgs(["--port", "0"])).toThrow("Invalid port");
+    expect(() => parseArgs(["--port", "65536"])).toThrow("Invalid port");
+  });
 });
 
 describe("verifyCopilotOAuthToken", () => {

@@ -623,6 +623,15 @@ describe("createHoopilotHandler", () => {
     ).toThrow("non-loopback");
   });
 
+  it("rejects invalid server ports from the environment", () => {
+    expect(() =>
+      startHoopilotServer({
+        env: { PORT: "65536" },
+        fetch: unusedFetch,
+      }),
+    ).toThrow("Invalid port");
+  });
+
   it("can start and stop a loopback Bun server", () => {
     const started = startHoopilotServer({
       env: {},

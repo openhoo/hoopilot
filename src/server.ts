@@ -146,7 +146,7 @@ export function createHoopilotHandler(
 
 export function startHoopilotServer(options: HoopilotServerOptions = {}): StartedHoopilotServer {
   const host = options.host ?? options.env?.HOST ?? DEFAULT_HOST;
-  const port = Number(options.port ?? options.env?.PORT ?? DEFAULT_PORT);
+  const port = normalizeServerPort(options.port ?? options.env?.PORT ?? DEFAULT_PORT);
   const apiKey = options.apiKey ?? options.env?.HOOPILOT_API_KEY;
   const allowUnauthenticated =
     options.allowUnauthenticated ?? options.env?.HOOPILOT_ALLOW_UNAUTHENTICATED === "1";
@@ -399,6 +399,14 @@ function isLoopbackOrigin(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+function normalizeServerPort(value: number | string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`Invalid port: ${value}.`);
+  }
+  return port;
 }
 
 function errorMessage(error: unknown): string {
