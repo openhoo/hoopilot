@@ -29,6 +29,18 @@ describe("parseArgs", () => {
     });
   });
 
+  it("keeps equals signs inside inline option values", () => {
+    expect(
+      parseArgs([
+        "--api-key=abc=def",
+        "--copilot-api-base-url=https://api.githubcopilot.example/models?token=a=b",
+      ]),
+    ).toMatchObject({
+      apiKey: "abc=def",
+      copilotApiBaseUrl: "https://api.githubcopilot.example/models?token=a=b",
+    });
+  });
+
   it("rejects removed token and auth mode options", () => {
     for (const option of [
       "--auth-mode",

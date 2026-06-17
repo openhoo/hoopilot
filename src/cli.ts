@@ -141,7 +141,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
-    const [name, inlineValue] = arg.split("=", 2);
+    const [name, inlineValue] = splitOption(arg);
     const value = inlineValue ?? rest.shift();
     if (!value) {
       throw new Error(`Missing value for ${arg}.`);
@@ -179,6 +179,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return args;
+}
+
+function splitOption(arg: string): [string, string | undefined] {
+  const separator = arg.indexOf("=");
+  if (separator === -1) {
+    return [arg, undefined];
+  }
+  return [arg.slice(0, separator), arg.slice(separator + 1)];
 }
 
 async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
