@@ -9,6 +9,7 @@ import { createHoopilotHandler, createUsageReader, startHoopilotServer } from ".
 import type { FetchLike, HoopilotLogger, HoopilotServerOptions, LogFields } from "../src/types";
 
 const tick = (ms = 10): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 
 describe("createHoopilotHandler", () => {
   it("proxies chat completions to Copilot", async () => {
@@ -614,6 +615,39 @@ describe("createHoopilotHandler", () => {
       error: { code: "invalid_request_error", message: "Request body must be valid JSON." },
     });
     expect(JSON.stringify(logs.entries)).not.toContain("secret prompt text");
+  });
+
+  it("rejects oversized JSON bodies before proxying upstream", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => {
+        calls += 1;
+        return Response.json({});
+      }),
+    );
+
+    const declared = await handler(
+      new Request("http://localhost/v1/chat/completions", {
+        body: "{}",
+        headers: { "content-length": String(MAX_REQUEST_BODY_BYTES + 1) },
+        method: "POST",
+      }),
+    );
+    expect(declared.status).toBe(413);
+
+    const chunked = await handler(
+      new Request("http://localhost/v1/chat/completions", {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x".repeat(MAX_REQUEST_BODY_BYTES + 1)));
+            controller.close();
+          },
+        }),
+        method: "POST",
+      }),
+    );
+    expect(chunked.status).toBe(413);
+    expect(calls).toBe(0);
   });
 
   it("does not log local API keys or request bodies", async () => {

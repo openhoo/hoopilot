@@ -28,7 +28,9 @@ const DEFAULT_PORT = 4141;
 const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
   "Browser-origin requests require HOOPILOT_API_KEY unless the Origin is loopback.";
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
+const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const REQUEST_TOO_LARGE_MESSAGE = `Request body must be ${MAX_REQUEST_BODY_BYTES} bytes or smaller.`;
 const USAGE_CACHE_TTL_MS = 60_000;
 
 interface UsageReadResult {
@@ -38,6 +40,13 @@ interface UsageReadResult {
 
 type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
 type TokenRecorder = (model: string, usage: TokenUsage) => void;
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super(REQUEST_TOO_LARGE_MESSAGE);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
 
 export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
@@ -135,6 +144,12 @@ export function createHoopilotHandler(
           "request body was invalid json",
         );
         return finish(jsonError(400, "invalid_request_error", message));
+      } else if (error instanceof RequestBodyTooLargeError) {
+        requestLogger.warn(
+          { err: errorDetails(error), event: "http.request.failed" },
+          "request body exceeded size limit",
+        );
+        return finish(jsonError(413, "request_too_large", message));
       } else {
         requestLogger.error(
           { err: errorDetails(error), event: "http.request.failed" },
@@ -313,20 +328,57 @@ function proxyResponse(upstream: Response): Response {
 }
 
 async function readJson(request: Request): Promise<JsonObject> {
+  const text = await readRequestText(request);
   try {
-    return asRecord(await request.json());
+    return asRecord(JSON.parse(text));
   } catch {
     throw new Error(INVALID_JSON_MESSAGE);
   }
 }
 
 async function readJsonText(request: Request): Promise<string> {
-  const text = await request.text();
+  const text = await readRequestText(request);
   try {
     JSON.parse(text);
     return text;
   } catch {
     throw new Error(INVALID_JSON_MESSAGE);
+  }
+}
+
+async function readRequestText(request: Request): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const declaredBytes = Number(contentLength);
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REQUEST_BODY_BYTES) {
+      throw new RequestBodyTooLargeError();
+    }
+  }
+
+  const body = request.body;
+  if (!body) {
+    return "";
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return `${text}${decoder.decode()}`;
+      }
+      bytes += value.byteLength;
+      if (bytes > MAX_REQUEST_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new RequestBodyTooLargeError();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
