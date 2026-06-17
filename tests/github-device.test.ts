@@ -80,13 +80,35 @@ describe("githubCopilotDeviceLogin", () => {
     };
 
     const result = await githubCopilotDeviceLogin({
-      env: { HOOPILOT_GITHUB_DOMAIN: "https://github.example/" },
+      env: { HOOPILOT_GITHUB_DOMAIN: "https://github.example:8443/" },
       fetch: fetcher,
       sleep: async () => {},
     });
 
-    expect(result.domain).toBe("github.example");
-    expect(requests[0]!.url).toBe("https://github.example/login/device/code");
+    expect(result.domain).toBe("github.example:8443");
+    expect(requests[0]!.url).toBe("https://github.example:8443/login/device/code");
+  });
+
+  it("rejects non-host GitHub domain overrides before OAuth requests", async () => {
+    for (const domain of [
+      "https://github.com@evil.example",
+      "github.example/login",
+      "github.example?redirect=evil",
+      "mailto:github@example.com",
+    ]) {
+      let calls = 0;
+      await expect(
+        githubCopilotDeviceLogin({
+          env: { HOOPILOT_GITHUB_DOMAIN: domain },
+          fetch: async () => {
+            calls += 1;
+            return Response.json({});
+          },
+          sleep: async () => {},
+        }),
+      ).rejects.toThrow("Invalid GitHub domain");
+      expect(calls).toBe(0);
+    }
   });
 
   it("ignores blank GitHub env overrides from copied env files", async () => {

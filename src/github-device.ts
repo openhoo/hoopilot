@@ -172,7 +172,26 @@ function oauthHeaders(): Headers {
 }
 
 function normalizeDomain(value: string): string {
-  return value.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const raw = value.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw new Error(`Invalid GitHub domain: ${value}.`);
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username ||
+    url.password ||
+    !url.hostname ||
+    (url.pathname !== "" && url.pathname !== "/") ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`Invalid GitHub domain: ${value}. Provide only a hostname.`);
+  }
+  return url.host;
 }
 
 function positiveSeconds(value: unknown, fallback: number): number {
