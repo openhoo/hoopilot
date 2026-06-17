@@ -301,6 +301,29 @@ describe("responsesStreamFromChatStream", () => {
     expect(delta?.data.item_id).toBe(messageItem?.data.item?.id);
   });
 
+  it("adds monotonically increasing sequence numbers to converted events", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const events = parseSseEvents(
+      await new Response(
+        responsesStreamFromChatStream(source, { model: "gpt-4.1", responseId: "resp_test" }),
+      ).text(),
+    );
+
+    expect(events.map((event) => event.data.sequence_number)).toEqual(
+      events.map((_, index) => index),
+    );
+  });
+
   it("keeps function-call ids consistent between stream events and response.completed", async () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -326,6 +349,29 @@ describe("responsesStreamFromChatStream", () => {
     expect(argsDone?.data.item_id).toBe(fnItem?.id);
   });
 
+  it("does not emit an empty message item for tool-only streams", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"save","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const events = parseSseEvents(
+      await new Response(
+        responsesStreamFromChatStream(source, { model: "gpt-4.1", responseId: "resp_test" }),
+      ).text(),
+    );
+
+    const addedItems = events.filter((event) => event.event === "response.output_item.added");
+    expect(addedItems).toHaveLength(1);
+    expect(addedItems[0]?.data.item?.type).toBe("function_call");
+  });
+
   it("translates streamed tool calls", async () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -346,6 +392,7 @@ describe("responsesStreamFromChatStream", () => {
     ).text();
 
     expect(text).toContain("response.function_call_arguments.done");
+    expect(text).toContain("response.function_call_arguments.delta");
     expect(text).toContain('"name":"save"');
     expect(text).toContain('"{\\"x\\":1}"');
   });
@@ -355,7 +402,8 @@ interface ParsedSseEvent {
   event: string;
   data: {
     item_id?: string;
-    item?: { id: string };
+    item?: { id: string; type?: string };
+    sequence_number: number;
     response?: { output: Array<{ id: string; type: string }> };
   };
 }

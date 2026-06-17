@@ -12,7 +12,9 @@ interface AccumulatedToolCall {
   arguments: string;
   id: string;
   index: number;
+  itemId?: string;
   name: string;
+  outputIndex?: number;
 }
 
 export function responsesRequestToChatCompletion(request: JsonObject): JsonObject {
@@ -206,40 +208,106 @@ export function responsesStreamFromChatStream(
   const createdAt = epochSeconds();
   let buffer = "";
   let text = "";
+  let messageOutputIndex: number | undefined;
+  let nextOutputIndex = 0;
+  let sequenceNumber = 0;
   const tools = new Map<number, AccumulatedToolCall>();
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueue = (event: string, data: JsonObject | "[DONE]") => {
-        controller.enqueue(encoder.encode(encodeSse(event, data)));
+        controller.enqueue(
+          encoder.encode(
+            encodeSse(
+              event,
+              data === "[DONE]" ? data : { ...data, sequence_number: sequenceNumber++ },
+            ),
+          ),
+        );
       };
 
       enqueue("response.created", {
         response: baseStreamResponse(responseId, options.model, createdAt, "in_progress", []),
         type: "response.created",
       });
-      enqueue("response.output_item.added", {
-        item: {
-          content: [],
-          id: messageId,
-          role: "assistant",
-          status: "in_progress",
-          type: "message",
-        },
-        output_index: 0,
-        type: "response.output_item.added",
-      });
-      enqueue("response.content_part.added", {
-        content_index: 0,
-        item_id: messageId,
-        output_index: 0,
-        part: {
-          annotations: [],
-          text: "",
-          type: "output_text",
-        },
-        type: "response.content_part.added",
-      });
+
+      const ensureMessageStarted = () => {
+        if (messageOutputIndex !== undefined) {
+          return;
+        }
+        messageOutputIndex = nextOutputIndex++;
+        enqueue("response.output_item.added", {
+          item: {
+            content: [],
+            id: messageId,
+            role: "assistant",
+            status: "in_progress",
+            type: "message",
+          },
+          output_index: messageOutputIndex,
+          type: "response.output_item.added",
+        });
+        enqueue("response.content_part.added", {
+          content_index: 0,
+          item_id: messageId,
+          output_index: messageOutputIndex,
+          part: {
+            annotations: [],
+            text: "",
+            type: "output_text",
+          },
+          type: "response.content_part.added",
+        });
+      };
+
+      const appendText = (delta: string) => {
+        ensureMessageStarted();
+        text += delta;
+        enqueue("response.output_text.delta", {
+          content_index: 0,
+          delta,
+          item_id: messageId,
+          output_index: messageOutputIndex ?? 0,
+          type: "response.output_text.delta",
+        });
+      };
+
+      const appendToolCall = (toolCall: JsonObject) => {
+        const fn = asRecord(toolCall.function);
+        const index = typeof toolCall.index === "number" ? toolCall.index : tools.size;
+        let existing = tools.get(index);
+        const isNew = !existing;
+        existing ??= {
+          arguments: "",
+          id: contentToText(toolCall.id) || `call_${randomId()}`,
+          index,
+          itemId: `fc_${randomId()}`,
+          name: "",
+          outputIndex: nextOutputIndex++,
+        };
+        existing.id = contentToText(toolCall.id) || existing.id;
+        existing.name += contentToText(fn.name);
+        tools.set(index, existing);
+
+        if (isNew) {
+          enqueue("response.output_item.added", {
+            item: functionCallItem(existing, "in_progress"),
+            output_index: existing.outputIndex ?? 0,
+            type: "response.output_item.added",
+          });
+        }
+
+        const argumentDelta = contentToText(fn.arguments);
+        if (argumentDelta) {
+          existing.arguments += argumentDelta;
+          enqueue("response.function_call_arguments.delta", {
+            delta: argumentDelta,
+            item_id: existing.itemId,
+            output_index: existing.outputIndex ?? 0,
+            type: "response.function_call_arguments.delta",
+          });
+        }
+      };
 
       const reader = chatStream.getReader();
       try {
@@ -252,54 +320,52 @@ export function responsesStreamFromChatStream(
           const lines = buffer.split(/\r?\n/);
           buffer = lines.pop() ?? "";
           for (const line of lines) {
-            processChatSseLine(messageId, line, enqueue, tools, (delta) => {
-              text += delta;
-            });
+            processChatSseLine(line, { appendText, appendToolCall });
           }
         }
         if (buffer) {
-          processChatSseLine(messageId, buffer, enqueue, tools, (delta) => {
-            text += delta;
-          });
+          processChatSseLine(buffer, { appendText, appendToolCall });
         }
 
         // Build the output items once so the ids emitted in the per-tool stream
         // events match the ids embedded in the final response.completed payload.
-        const toolItems = [...tools.values()].map(functionCallItem);
-        const output = [messageOutputItem(text, messageId), ...toolItems];
-        enqueue("response.output_text.done", {
-          content_index: 0,
-          item_id: messageId,
-          output_index: 0,
-          text,
-          type: "response.output_text.done",
-        });
-        enqueue("response.content_part.done", {
-          content_index: 0,
-          item_id: messageId,
-          output_index: 0,
-          part: {
-            annotations: [],
+        const outputEntries: Array<[number, JsonObject]> = [];
+        if (messageOutputIndex !== undefined) {
+          const item = messageOutputItem(text, messageId);
+          outputEntries.push([messageOutputIndex, item]);
+          enqueue("response.output_text.done", {
+            content_index: 0,
+            item_id: messageId,
+            output_index: messageOutputIndex,
             text,
-            type: "output_text",
-          },
-          type: "response.content_part.done",
-        });
-        enqueue("response.output_item.done", {
-          item: output[0],
-          output_index: 0,
-          type: "response.output_item.done",
-        });
-
-        toolItems.forEach((item, index) => {
-          const outputIndex = index + 1;
-          enqueue("response.output_item.added", {
-            item,
-            output_index: outputIndex,
-            type: "response.output_item.added",
+            type: "response.output_text.done",
           });
+          enqueue("response.content_part.done", {
+            content_index: 0,
+            item_id: messageId,
+            output_index: messageOutputIndex,
+            part: {
+              annotations: [],
+              text,
+              type: "output_text",
+            },
+            type: "response.content_part.done",
+          });
+          enqueue("response.output_item.done", {
+            item,
+            output_index: messageOutputIndex,
+            type: "response.output_item.done",
+          });
+        }
+
+        for (const tool of [...tools.values()].sort(
+          (a, b) => (a.outputIndex ?? 0) - (b.outputIndex ?? 0),
+        )) {
+          const item = functionCallItem(tool);
+          const outputIndex = tool.outputIndex ?? 0;
+          outputEntries.push([outputIndex, item]);
           enqueue("response.function_call_arguments.done", {
-            arguments: item.arguments,
+            arguments: tool.arguments,
             item_id: item.id,
             output_index: outputIndex,
             type: "response.function_call_arguments.done",
@@ -309,7 +375,11 @@ export function responsesStreamFromChatStream(
             output_index: outputIndex,
             type: "response.output_item.done",
           });
-        });
+        }
+
+        const output = outputEntries
+          .sort(([left], [right]) => left - right)
+          .map(([, item]) => item);
 
         enqueue("response.completed", {
           response: baseStreamResponse(responseId, options.model, createdAt, "completed", output),
@@ -512,13 +582,16 @@ function messageOutputItem(text: string, id = `msg_${randomId()}`): JsonObject {
   };
 }
 
-function functionCallItem(tool: AccumulatedToolCall): JsonObject {
+function functionCallItem(
+  tool: AccumulatedToolCall,
+  status: "in_progress" | "completed" = "completed",
+): JsonObject {
   return {
     arguments: tool.arguments,
     call_id: tool.id,
-    id: `fc_${randomId()}`,
+    id: tool.itemId ?? `fc_${randomId()}`,
     name: tool.name,
-    status: "completed",
+    status,
     type: "function_call",
   };
 }
@@ -652,11 +725,11 @@ function processCompletionSseLine(
 }
 
 function processChatSseLine(
-  messageId: string,
   line: string,
-  enqueue: (event: string, data: JsonObject | "[DONE]") => void,
-  tools: Map<number, AccumulatedToolCall>,
-  appendText: (delta: string) => void,
+  handlers: {
+    appendText: (delta: string) => void;
+    appendToolCall: (toolCall: JsonObject) => void;
+  },
 ): void {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) {
@@ -675,31 +748,12 @@ function processChatSseLine(
   const delta = asRecord(choice.delta);
   const content = contentToText(delta.content);
   if (content) {
-    appendText(content);
-    enqueue("response.output_text.delta", {
-      content_index: 0,
-      delta: content,
-      item_id: messageId,
-      output_index: 0,
-      type: "response.output_text.delta",
-    });
+    handlers.appendText(content);
   }
 
   const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
   for (const toolCall of toolCalls) {
-    const record = asRecord(toolCall);
-    const fn = asRecord(record.function);
-    const index = typeof record.index === "number" ? record.index : tools.size;
-    const existing = tools.get(index) ?? {
-      arguments: "",
-      id: contentToText(record.id) || `call_${randomId()}`,
-      index,
-      name: "",
-    };
-    existing.id = contentToText(record.id) || existing.id;
-    existing.name += contentToText(fn.name);
-    existing.arguments += contentToText(fn.arguments);
-    tools.set(index, existing);
+    handlers.appendToolCall(asRecord(toolCall));
   }
 }
 
