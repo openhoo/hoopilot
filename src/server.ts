@@ -28,6 +28,7 @@ const DEFAULT_PORT = 4141;
 const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
   "Browser-origin requests require HOOPILOT_API_KEY unless the Origin is loopback.";
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const USAGE_CACHE_TTL_MS = 60_000;
 
 interface UsageReadResult {
@@ -554,7 +555,7 @@ function logRequestCompleted(
 
 function requestIdFor(request: Request): string {
   const existing = request.headers.get("x-request-id")?.trim();
-  return existing || crypto.randomUUID();
+  return existing && REQUEST_ID_PATTERN.test(existing) ? existing : crypto.randomUUID();
 }
 
 function canonicalApiPath(path: string): string {

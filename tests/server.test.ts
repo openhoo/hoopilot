@@ -149,6 +149,28 @@ describe("createHoopilotHandler", () => {
     );
   });
 
+  it("bounds client-supplied request ids before echoing or logging them", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      env: {},
+      fetch: unusedFetch,
+      logger: logs.logger,
+    });
+
+    for (const supplied of ["has spaces", "x".repeat(129)]) {
+      const response = await handler(
+        new Request("http://localhost/healthz", {
+          headers: { "x-request-id": supplied },
+        }),
+      );
+
+      const echoed = response.headers.get("x-request-id") ?? "";
+      expect(echoed).not.toBe(supplied);
+      expect(echoed).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    }
+    expect(logs.entries.map((entry) => entry.fields.requestId)).not.toContain("has spaces");
+  });
+
   it("creates a logger from server logging options", async () => {
     const handler = createHoopilotHandler({
       env: {},
