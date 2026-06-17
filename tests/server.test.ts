@@ -701,6 +701,19 @@ describe("createHoopilotHandler", () => {
     expect(started.url).toStartWith("http://127.0.0.1:");
     started.server.stop(true);
   });
+
+  it("formats IPv6 loopback server URLs with brackets", () => {
+    const started = startHoopilotServer({
+      env: {},
+      fetch: unusedFetch,
+      host: "::1",
+      port: 0,
+    });
+
+    expect(started.url).toMatch(/^http:\/\/\[::1\]:\d+$/);
+    expect(new URL(started.url).hostname).toBe("[::1]");
+    started.server.stop(true);
+  });
 });
 
 describe("metrics and usage endpoints", () => {

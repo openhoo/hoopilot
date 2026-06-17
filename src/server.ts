@@ -172,7 +172,7 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
 
   return {
     server,
-    url: `http://${host}:${server.port}`,
+    url: `http://${urlHost(host)}:${server.port}`,
   };
 }
 
@@ -412,6 +412,10 @@ function upstreamAuthMessage(message: string): string {
 
 function isLoopbackHost(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+}
+
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
 function isLoopbackOrigin(origin: string): boolean {
