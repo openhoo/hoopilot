@@ -1,5 +1,18 @@
 # @openhoo/hoopilot Changelog
 
+## 0.8.0 (2026-06-17)
+
+### Bug Fixes
+
+- **server:** expose request ids over cors (1fb989b)
+- **server:** reject non-object json requests (e8d113c)
+- **auth:** validate github domain overrides (4880372)
+- **cli:** honor subcommand version flags (8c45483)
+
+### Features
+
+- **server:** add Claude Code routes (577dc19)
+
 ## 0.7.5 (2026-06-17)
 
 ### Bug Fixes
