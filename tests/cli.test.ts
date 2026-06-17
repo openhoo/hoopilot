@@ -103,6 +103,24 @@ describe("main", () => {
       "Run Codex against an already-running local Hoopilot server",
     );
   });
+
+  it("honors version flags on subcommands before running them", async () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => {
+      lines.push(values.join(" "));
+    };
+    try {
+      await main(["login", "--version"]);
+      await main(["update", "--version"]);
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^\d+\.\d+\.\d+/);
+    expect(lines[1]).toBe(lines[0]);
+  });
 });
 
 describe("verifyCopilotOAuthToken", () => {

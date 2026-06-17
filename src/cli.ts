@@ -48,8 +48,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   const command = argv[0];
   if (command === "update" || command === "upgrade") {
     const args = withRuntimeEnv(parseArgs(argv.slice(1)));
-    if (args.help) {
-      console.log(helpText(await getVersion()));
+    if (await printMetaOption(args)) {
       return;
     }
     const logger = commandLogger(args, command);
@@ -62,8 +61,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   }
   if (command === "login") {
     const args = withRuntimeEnv(parseArgs(argv.slice(1)));
-    if (args.help) {
-      console.log(helpText(await getVersion()));
+    if (await printMetaOption(args)) {
       return;
     }
     args.logger = commandLogger(args, "login");
@@ -72,8 +70,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   }
   if (command === "models") {
     const args = withRuntimeEnv(parseArgs(argv.slice(1)));
-    if (args.help) {
-      console.log(helpText(await getVersion()));
+    if (await printMetaOption(args)) {
       return;
     }
     args.logger = commandLogger(args, "models");
@@ -82,8 +79,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   }
   if (command === "usage") {
     const args = withRuntimeEnv(parseArgs(argv.slice(1)));
-    if (args.help) {
-      console.log(helpText(await getVersion()));
+    if (await printMetaOption(args)) {
       return;
     }
     args.logger = commandLogger(args, "usage");
@@ -92,12 +88,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   }
 
   const args = withRuntimeEnv(parseArgs(argv));
-  if (args.help) {
-    console.log(helpText(await getVersion()));
-    return;
-  }
-  if (args.version) {
-    console.log(await getVersion());
+  if (await printMetaOption(args)) {
     return;
   }
 
@@ -124,6 +115,18 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
       logger.child({ component: "update" }),
     );
   }
+}
+
+async function printMetaOption(args: ParsedArgs): Promise<boolean> {
+  if (args.help) {
+    console.log(helpText(await getVersion()));
+    return true;
+  }
+  if (args.version) {
+    console.log(await getVersion());
+    return true;
+  }
+  return false;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
