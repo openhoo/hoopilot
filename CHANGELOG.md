@@ -1,5 +1,25 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.3 (2026-06-17)
+
+### Bug Fixes
+
+- reject stray cli arguments clearly (df8c2d3)
+- bound client request ids (2b23d43)
+- honor explicit copilot base urls (bba9834)
+- avoid ambient openai key in codexx (c36c193)
+- avoid repo-local auth fallback (3507a14)
+- bracket ipv6 server urls (1d5cd50)
+- surface streamed completion errors (1ae8817)
+- cap proxied request bodies (d3cdbe8)
+- restrict token upstream hosts (9a54c02)
+
+### Other Changes
+
+- align codexx cli references (7f53230)
+- validate release package artifacts (51ae830)
+- cover utility hardening helpers (cfcc585)
+
 ## 0.7.2 (2026-06-17)
 
 ### Bug Fixes
