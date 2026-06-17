@@ -4,6 +4,7 @@ import {
   assetNameFor,
   assetSuffixFor,
   checksumFor,
+  codexxShimFiles,
   compareSemver,
   formatUpdateNotice,
   isOutdated,
@@ -169,6 +170,28 @@ describe("shouldCleanupOldBinary", () => {
     expect(shouldCleanupOldBinary("win32", false)).toBe(false);
     expect(shouldCleanupOldBinary("linux", true)).toBe(false);
     expect(shouldCleanupOldBinary("darwin", true)).toBe(false);
+  });
+});
+
+describe("codexxShimFiles", () => {
+  it("creates a Unix shim that delegates to hoopilot codexx", () => {
+    const files = codexxShimFiles("linux");
+
+    expect(files).toEqual([
+      expect.objectContaining({
+        executable: true,
+        name: "codexx",
+      }),
+    ]);
+    expect(files[0]!.content).toContain('exec "$script_dir/hoopilot" codexx "$@"');
+  });
+
+  it("creates Windows shims that delegate to hoopilot.exe codexx", () => {
+    const files = codexxShimFiles("win32");
+
+    expect(files.map((file) => file.name)).toEqual(["codexx.ps1", "codexx.cmd"]);
+    expect(files[0]!.content).toContain("& $hoopilot codexx @args");
+    expect(files[1]!.content).toContain("codexx.ps1");
   });
 });
 

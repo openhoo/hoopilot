@@ -28,22 +28,8 @@ install_codexx_wrapper() {
   cat >"$wrapper" <<'EOF'
 #!/bin/sh
 set -eu
-
-base_url="${CODEXX_BASE_URL:-http://127.0.0.1:4141/v1}"
-api_key="${CODEXX_API_KEY:-${HOOPILOT_API_KEY:-${OPENAI_API_KEY:-local-key}}}"
-codex_bin="${CODEXX_CODEX_BIN:-codex}"
-model="${CODEXX_MODEL:-gpt-5.5}"
-reasoning_effort="${CODEXX_MODEL_REASONING_EFFORT:-xhigh}"
-provider_config="{ name = \"Hoopilot\", base_url = \"$base_url\", env_key = \"OPENAI_API_KEY\", wire_api = \"responses\", supports_websockets = false }"
-
-unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
-OPENAI_API_KEY="$api_key" exec "$codex_bin" \
-  --disable network_proxy \
-  -c 'model_provider="hoopilot"' \
-  -c "model_providers.hoopilot=$provider_config" \
-  -m "$model" \
-  -c "model_reasoning_effort=\"$reasoning_effort\"" \
-  "$@"
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+exec "$script_dir/hoopilot" codexx "$@"
 EOF
   chmod +x "$wrapper" || err "cannot make $wrapper executable"
   info "Installed $CODEXX_BIN to $wrapper"

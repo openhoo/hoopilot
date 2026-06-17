@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
+import { main as codexxMain } from "./codexx";
 import { applyCopilotHeaders, CopilotClient, normalizeCopilotUsage } from "./copilot";
 import { githubCopilotDeviceLogin } from "./github-device";
 import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
@@ -44,6 +45,10 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     }
     const logger = commandLogger(args, command);
     await runUpdate(await getVersion(), logger);
+    return;
+  }
+  if (command === "codexx") {
+    await codexxMain(argv.slice(1), process.env);
     return;
   }
   if (command === "login") {
@@ -426,6 +431,7 @@ OpenAI-compatible proxy for GitHub Copilot.
 
 Usage:
   hoopilot [serve] [options]
+  hoopilot codexx [codex options] [prompt]
   hoopilot login [options]
   hoopilot models [options]
   hoopilot usage [options]
@@ -434,6 +440,7 @@ Usage:
 
 Commands:
   serve                             Start the proxy server (default)
+  codexx                            Run Codex through the local Hoopilot server
   login                             Sign in through GitHub OAuth in a browser and verify Copilot access
   models                            List available GitHub Copilot model IDs
   usage                             Show GitHub Copilot quota and premium-request usage

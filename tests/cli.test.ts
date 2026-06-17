@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
-import { parseArgs, runModels, runUsage, verifyCopilotOAuthToken } from "../src/cli";
+import { main, parseArgs, runModels, runUsage, verifyCopilotOAuthToken } from "../src/cli";
 import type { FetchLike } from "../src/types";
 
 describe("parseArgs", () => {
@@ -61,6 +61,26 @@ describe("parseArgs", () => {
   it("rejects ports outside the TCP range", () => {
     expect(() => parseArgs(["--port", "0"])).toThrow("Invalid port");
     expect(() => parseArgs(["--port", "65536"])).toThrow("Invalid port");
+  });
+});
+
+describe("main", () => {
+  it("routes hoopilot codexx to the codexx entrypoint", async () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => {
+      lines.push(values.join(" "));
+    };
+    try {
+      await main(["codexx", "--help"]);
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(lines.join("\n")).toContain("codexx");
+    expect(lines.join("\n")).toContain(
+      "Run Codex against an already-running local Hoopilot server",
+    );
   });
 });
 

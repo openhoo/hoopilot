@@ -113,47 +113,8 @@ function Install-CodexxWrapper {
   $cmd = Join-Path $InstallDir "$CodexxBin.cmd"
   @'
 $ErrorActionPreference = 'Stop'
-
-$baseUrl = if ($env:CODEXX_BASE_URL) { $env:CODEXX_BASE_URL } else { 'http://127.0.0.1:4141/v1' }
-$apiKey = if ($env:CODEXX_API_KEY) {
-  $env:CODEXX_API_KEY
-} elseif ($env:HOOPILOT_API_KEY) {
-  $env:HOOPILOT_API_KEY
-} elseif ($env:OPENAI_API_KEY) {
-  $env:OPENAI_API_KEY
-} else {
-  'local-key'
-}
-$codexBin = if ($env:CODEXX_CODEX_BIN) { $env:CODEXX_CODEX_BIN } else { 'codex' }
-$model = if ($env:CODEXX_MODEL) { $env:CODEXX_MODEL } else { 'gpt-5.5' }
-$reasoningEffort = if ($env:CODEXX_MODEL_REASONING_EFFORT) {
-  $env:CODEXX_MODEL_REASONING_EFFORT
-} else {
-  'xhigh'
-}
-$providerConfig = "{ name = `"Hoopilot`", base_url = `"$baseUrl`", env_key = `"OPENAI_API_KEY`", wire_api = `"responses`", supports_websockets = false }"
-
-foreach ($name in @(
-  'ALL_PROXY',
-  'HTTPS_PROXY',
-  'HTTP_PROXY',
-  'NO_PROXY',
-  'all_proxy',
-  'https_proxy',
-  'http_proxy',
-  'no_proxy'
-)) {
-  Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
-}
-
-$env:OPENAI_API_KEY = $apiKey
-& $codexBin `
-  --disable network_proxy `
-  -c 'model_provider="hoopilot"' `
-  -c "model_providers.hoopilot=$providerConfig" `
-  -m $model `
-  -c "model_reasoning_effort=`"$reasoningEffort`"" `
-  @args
+$hoopilot = Join-Path $PSScriptRoot 'hoopilot.exe'
+& $hoopilot codexx @args
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $ps1 -Encoding UTF8 -Force
 

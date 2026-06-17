@@ -20,6 +20,12 @@ export interface UpdateState {
   etag?: string | null;
 }
 
+export interface CodexxShimFile {
+  content: string;
+  executable: boolean;
+  name: string;
+}
+
 interface SemVer {
   major: number;
   minor: number;
@@ -182,6 +188,48 @@ export function upgradeCommandFor(kind: InstallKind): string {
 /** Whether it is safe to remove a leftover Windows self-update backup. */
 export function shouldCleanupOldBinary(platform: string, isStandaloneBinary: boolean): boolean {
   return platform === "win32" && isStandaloneBinary;
+}
+
+/** Files that expose the standalone `codexx` command next to the `hoopilot` binary. */
+export function codexxShimFiles(platform: string): CodexxShimFile[] {
+  if (platform === "win32") {
+    return [
+      {
+        content: `$ErrorActionPreference = 'Stop'
+$hoopilot = Join-Path $PSScriptRoot 'hoopilot.exe'
+& $hoopilot codexx @args
+exit $LASTEXITCODE
+`,
+        executable: false,
+        name: "codexx.ps1",
+      },
+      {
+        content: `@echo off
+setlocal
+where pwsh >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0codexx.ps1" %*
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0codexx.ps1" %*
+)
+exit /b %ERRORLEVEL%
+`,
+        executable: false,
+        name: "codexx.cmd",
+      },
+    ];
+  }
+  return [
+    {
+      content: `#!/bin/sh
+set -eu
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+exec "$script_dir/hoopilot" codexx "$@"
+`,
+      executable: true,
+      name: "codexx",
+    },
+  ];
 }
 
 /** Render the "update available" notice printed to stderr. */

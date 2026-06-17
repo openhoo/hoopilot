@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -20,6 +21,7 @@ import {
   assetNameFor,
   assetSuffixFor,
   checksumFor,
+  codexxShimFiles,
   formatUpdateNotice,
   type InstallKind,
   isOutdated,
@@ -305,6 +307,24 @@ function swapBinary(tmpFile: string, exePath: string): void {
   }
 }
 
+function refreshCodexxShim(dir: string, logger?: HoopilotLogger): void {
+  try {
+    for (const file of codexxShimFiles(process.platform)) {
+      const path = join(dir, file.name);
+      writeFileSync(path, file.content, "utf8");
+      if (file.executable) {
+        chmodSync(path, 0o755);
+      }
+    }
+  } catch (error) {
+    logger?.warn(
+      { err: errorDetails(error), event: "update.codexx_shim_failed" },
+      "could not refresh codexx shim",
+    );
+    console.warn(`Updated hoopilot, but could not refresh the codexx shim: ${errorMessage(error)}`);
+  }
+}
+
 /** Remove the leftover ".old" binary from a prior Windows self-update. */
 export function cleanupOldBinary(): void {
   if (!shouldCleanupOldBinary(process.platform, IS_STANDALONE_BINARY)) {
@@ -371,6 +391,7 @@ export async function runUpdate(currentVersion: string, logger?: HoopilotLogger)
       chmodSync(tmpFile, 0o755);
     }
     swapBinary(tmpFile, exePath);
+    refreshCodexxShim(dirname(exePath), logger);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM") {
@@ -395,4 +416,8 @@ export async function runUpdate(currentVersion: string, logger?: HoopilotLogger)
   if (process.platform === "win32") {
     console.log("Restart hoopilot to run the new version.");
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
