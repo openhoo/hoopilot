@@ -4,8 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh
 #
 # Pin a version or install dir:
-#   ... | sh -s -- --version 0.2.5 --dir ~/bin
-#   HOOPILOT_INSTALL_DIR=~/bin HOOPILOT_VERSION=0.2.5 ... | sh
+#   ... | sh -s -- --version <version> --dir ~/bin
+#   HOOPILOT_INSTALL_DIR=~/bin HOOPILOT_VERSION=<version> ... | sh
 set -eu
 
 REPO="openhoo/hoopilot"

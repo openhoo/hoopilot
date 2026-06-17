@@ -41,11 +41,11 @@ irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1 
 The installer detects your OS, CPU architecture, and libc, downloads the matching binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin` on Linux/macOS or `%LOCALAPPDATA%\Programs\hoopilot` on Windows. Override the location with `HOOPILOT_INSTALL_DIR`, or pin a version:
 
 ```powershell
-curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh -s -- --version 0.3.0 --dir ~/bin
+curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh -s -- --version <version> --dir ~/bin
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version 0.3.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1))) -Version <version>
 ```
 
 The standalone installer also installs a `codexx` wrapper next to `hoopilot`. Re-run the installer if `hoopilot` works but your shell does not recognize `codexx`; the installer stops the installed `hoopilot.exe` if needed and replaces the existing files in place.
