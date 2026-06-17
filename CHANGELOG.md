@@ -1,5 +1,12 @@
 # @openhoo/hoopilot Changelog
 
+## 0.7.4 (2026-06-17)
+
+### Bug Fixes
+
+- harden legacy completions compatibility (605e0e3)
+- reject lossy responses chat conversion (d82aec4)
+
 ## 0.7.3 (2026-06-17)
 
 ### Bug Fixes
