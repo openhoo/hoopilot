@@ -65,6 +65,22 @@ describe("buildCodexxInvocation", () => {
     expect(invocation.env.OPENAI_API_KEY).toBe("override-key");
   });
 
+  it("does not reuse an ambient OpenAI API key as the local Hoopilot key", async () => {
+    const requests: Request[] = [];
+    const invocation = buildCodexxInvocation([], {
+      OPENAI_API_KEY: "sk-real-openai-key",
+    });
+
+    await verifyCodexxModel(invocation, async (input, init) => {
+      requests.push(new Request(input, init));
+      return Response.json({ data: [{ id: "gpt-5.5" }] });
+    });
+
+    expect(invocation.env.OPENAI_API_KEY).toBe("local-key");
+    expect(requests[0]!.headers.get("authorization")).toBe("Bearer local-key");
+    expect(requests[0]!.headers.get("authorization")).not.toContain("sk-real-openai-key");
+  });
+
   it("preflights the requested model against the local models endpoint", async () => {
     const requests: Request[] = [];
     const invocation = buildCodexxInvocation([], {

@@ -33,8 +33,7 @@ export function buildCodexxInvocation(
   env: NodeJS.ProcessEnv = process.env,
 ): CodexxInvocation {
   const baseUrl = env.CODEXX_BASE_URL ?? DEFAULT_BASE_URL;
-  const apiKey =
-    env.CODEXX_API_KEY ?? env.HOOPILOT_API_KEY ?? env.OPENAI_API_KEY ?? DEFAULT_API_KEY;
+  const apiKey = env.CODEXX_API_KEY ?? env.HOOPILOT_API_KEY ?? DEFAULT_API_KEY;
   const command = env.CODEXX_CODEX_BIN ?? DEFAULT_CODEX_BIN;
   const model = env.CODEXX_MODEL ?? DEFAULT_MODEL;
   const reasoningEffort = env.CODEXX_MODEL_REASONING_EFFORT ?? DEFAULT_REASONING_EFFORT;
@@ -154,7 +153,6 @@ Environment:
   CODEXX_BASE_URL      OpenAI-compatible base URL. Default: ${DEFAULT_BASE_URL}
   CODEXX_API_KEY       API key sent to the local Hoopilot server.
   HOOPILOT_API_KEY     Used as the API key when CODEXX_API_KEY is unset.
-  OPENAI_API_KEY       Used as the API key when both CODEXX_API_KEY and HOOPILOT_API_KEY are unset.
   CODEXX_CODEX_BIN     Codex executable to run. Default: ${DEFAULT_CODEX_BIN}
   CODEXX_MODEL         Codex model to use. Default: ${DEFAULT_MODEL}
   CODEXX_MODEL_REASONING_EFFORT
