@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { envValue } from "./util";
 
 export class StoredCopilotAuthError extends Error {
   constructor(message: string) {
@@ -17,14 +18,26 @@ export interface StoredCopilotAuth {
 }
 
 export function authStorePath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.HOOPILOT_AUTH_FILE) {
-    return env.HOOPILOT_AUTH_FILE;
+  const explicit = envValue(env.HOOPILOT_AUTH_FILE);
+  if (explicit) {
+    return explicit;
   }
 
-  const base =
-    env.XDG_CONFIG_HOME ??
-    env.APPDATA ??
-    (env.HOME ? join(env.HOME, ".config") : join(process.cwd(), ".config"));
+  const xdg = envValue(env.XDG_CONFIG_HOME);
+  if (xdg) {
+    return join(xdg, "hoopilot", "auth.json");
+  }
+  const appdata = envValue(env.APPDATA);
+  if (appdata) {
+    return join(appdata, "hoopilot", "auth.json");
+  }
+  const home = envValue(env.HOME);
+  if (!home) {
+    throw new StoredCopilotAuthError(
+      "Cannot resolve Hoopilot auth file path without HOOPILOT_AUTH_FILE, XDG_CONFIG_HOME, APPDATA, or HOME.",
+    );
+  }
+  const base = join(home, ".config");
   return join(base, "hoopilot", "auth.json");
 }
 

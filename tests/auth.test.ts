@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CopilotAuth } from "../src/auth";
-import { authStorePath, writeStoredCopilotAuth } from "../src/auth-store";
+import { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "../src/auth-store";
 
 describe("CopilotAuth", () => {
   it("loads the stored GitHub Copilot OAuth credential", async () => {
@@ -111,11 +111,21 @@ describe("authStorePath", () => {
     expect(authStorePath({ HOOPILOT_AUTH_FILE: "/tmp/hoopilot-auth.json" })).toBe(
       "/tmp/hoopilot-auth.json",
     );
+    expect(authStorePath({ HOME: "/home/test", HOOPILOT_AUTH_FILE: "" })).toBe(
+      "/home/test/.config/hoopilot/auth.json",
+    );
     expect(authStorePath({ XDG_CONFIG_HOME: "/tmp/xdg" })).toBe("/tmp/xdg/hoopilot/auth.json");
     expect(authStorePath({ APPDATA: "C:\\Users\\test\\AppData\\Roaming" })).toBe(
       "C:\\Users\\test\\AppData\\Roaming/hoopilot/auth.json",
     );
     expect(authStorePath({ HOME: "/home/test" })).toBe("/home/test/.config/hoopilot/auth.json");
+  });
+
+  it("refuses to fall back to a repo-local auth path without a config root", () => {
+    expect(() => authStorePath({})).toThrow("Cannot resolve Hoopilot auth file path");
+    expect(() => readStoredCopilotAuth(authStorePath({}))).toThrow(
+      "Cannot resolve Hoopilot auth file path",
+    );
   });
 });
 

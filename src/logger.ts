@@ -7,6 +7,7 @@ import type {
   LogFormat,
   LogLevel,
 } from "./types";
+import { envValue } from "./util";
 
 export const DEFAULT_LOG_FORMAT: LogFormat = "pretty";
 export const DEFAULT_LOG_LEVEL: LogLevel = "info";
@@ -48,8 +49,8 @@ export const noopLogger: HoopilotLogger = {
 
 export function createHoopilotLogger(options: HoopilotLoggerOptions = {}): HoopilotLogger {
   const env = options.env ?? process.env;
-  const level = parseLogLevel(options.level ?? env.HOOPILOT_LOG_LEVEL);
-  const format = parseLogFormat(options.format ?? env.HOOPILOT_LOG_FORMAT);
+  const level = parseLogLevel(options.level ?? envValue(env.HOOPILOT_LOG_LEVEL));
+  const format = parseLogFormat(options.format ?? envValue(env.HOOPILOT_LOG_FORMAT));
   const pinoOptions: pino.LoggerOptions = {
     base: {
       service: "hoopilot",
@@ -112,8 +113,8 @@ export function shouldCreateLogger(options: {
     options.logger ||
       options.logFormat ||
       options.logLevel ||
-      options.env?.HOOPILOT_LOG_FORMAT ||
-      options.env?.HOOPILOT_LOG_LEVEL,
+      envValue(options.env?.HOOPILOT_LOG_FORMAT) ||
+      envValue(options.env?.HOOPILOT_LOG_LEVEL),
   );
 }
 

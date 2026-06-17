@@ -18,7 +18,13 @@ import type {
   HoopilotServerOptions,
 } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
-import { asRecord, isHttpsOrLoopbackUrl, trimTrailingSlash, truncatedResponseText } from "./util";
+import {
+  asRecord,
+  envValue,
+  isHttpsOrLoopbackUrl,
+  trimTrailingSlash,
+  truncatedResponseText,
+} from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 interface ParsedArgs extends HoopilotServerOptions {
@@ -373,7 +379,9 @@ export async function verifyCopilotOAuthToken(
   options: VerifyCopilotOAuthTokenOptions = {},
 ): Promise<CopilotAccess> {
   const apiBaseUrl = trimTrailingSlash(
-    options.copilotApiBaseUrl ?? options.env?.COPILOT_API_BASE_URL ?? DEFAULT_COPILOT_API_BASE_URL,
+    options.copilotApiBaseUrl ??
+      envValue(options.env?.COPILOT_API_BASE_URL) ??
+      DEFAULT_COPILOT_API_BASE_URL,
   );
   if (!isHttpsOrLoopbackUrl(apiBaseUrl)) {
     throw new Error(`Refusing to send the GitHub OAuth token to a non-HTTPS host: ${apiBaseUrl}`);

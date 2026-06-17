@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { constants as osConstants } from "node:os";
 import type { FetchLike } from "./types";
+import { envValue } from "./util";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
 const DEFAULT_API_KEY = "local-key";
@@ -32,11 +33,11 @@ export function buildCodexxInvocation(
   argv: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): CodexxInvocation {
-  const baseUrl = env.CODEXX_BASE_URL ?? DEFAULT_BASE_URL;
-  const apiKey = env.CODEXX_API_KEY ?? env.HOOPILOT_API_KEY ?? DEFAULT_API_KEY;
-  const command = env.CODEXX_CODEX_BIN ?? DEFAULT_CODEX_BIN;
-  const model = env.CODEXX_MODEL ?? DEFAULT_MODEL;
-  const reasoningEffort = env.CODEXX_MODEL_REASONING_EFFORT ?? DEFAULT_REASONING_EFFORT;
+  const baseUrl = envValue(env.CODEXX_BASE_URL) ?? DEFAULT_BASE_URL;
+  const apiKey = envValue(env.CODEXX_API_KEY) ?? envValue(env.HOOPILOT_API_KEY) ?? DEFAULT_API_KEY;
+  const command = envValue(env.CODEXX_CODEX_BIN) ?? DEFAULT_CODEX_BIN;
+  const model = envValue(env.CODEXX_MODEL) ?? DEFAULT_MODEL;
+  const reasoningEffort = envValue(env.CODEXX_MODEL_REASONING_EFFORT) ?? DEFAULT_REASONING_EFFORT;
   const providerConfig = [
     '{ name = "Hoopilot"',
     `base_url = ${JSON.stringify(baseUrl)}`,

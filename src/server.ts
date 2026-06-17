@@ -21,7 +21,7 @@ import type {
   StartedHoopilotServer,
   TokenUsage,
 } from "./types";
-import { asRecord } from "./util";
+import { asRecord, envValue } from "./util";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
@@ -43,7 +43,7 @@ export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
 ): (request: Request) => Promise<Response> {
   const client = new CopilotClient(options);
-  const apiKey = options.apiKey ?? options.env?.HOOPILOT_API_KEY;
+  const apiKey = options.apiKey ?? envValue(options.env?.HOOPILOT_API_KEY);
   const logger = serverLogger(options);
   const metrics = options.metrics ?? new MetricsRegistry();
   const readUsage = createUsageReader(client, metrics);
@@ -147,11 +147,11 @@ export function createHoopilotHandler(
 }
 
 export function startHoopilotServer(options: HoopilotServerOptions = {}): StartedHoopilotServer {
-  const host = options.host ?? options.env?.HOST ?? DEFAULT_HOST;
-  const port = normalizeServerPort(options.port ?? options.env?.PORT ?? DEFAULT_PORT);
-  const apiKey = options.apiKey ?? options.env?.HOOPILOT_API_KEY;
+  const host = options.host ?? envValue(options.env?.HOST) ?? DEFAULT_HOST;
+  const port = normalizeServerPort(options.port ?? envValue(options.env?.PORT) ?? DEFAULT_PORT);
+  const apiKey = options.apiKey ?? envValue(options.env?.HOOPILOT_API_KEY);
   const allowUnauthenticated =
-    options.allowUnauthenticated ?? options.env?.HOOPILOT_ALLOW_UNAUTHENTICATED === "1";
+    options.allowUnauthenticated ?? envValue(options.env?.HOOPILOT_ALLOW_UNAUTHENTICATED) === "1";
 
   if (!isLoopbackHost(host) && !apiKey && !allowUnauthenticated) {
     throw new Error(

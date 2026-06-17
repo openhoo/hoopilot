@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FetchLike, Logger } from "./types";
-import { truncatedResponseText } from "./util";
+import { envValue, truncatedResponseText } from "./util";
 
 export const DEFAULT_GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
 const DEFAULT_GITHUB_DOMAIN = "github.com";
@@ -45,12 +45,12 @@ export async function githubCopilotDeviceLogin(
   const fetcher = options.fetch ?? fetch;
   const sleeper = options.sleep ?? sleep;
   const domain = normalizeDomain(
-    options.domain ?? env.HOOPILOT_GITHUB_DOMAIN ?? DEFAULT_GITHUB_DOMAIN,
+    options.domain ?? envValue(env.HOOPILOT_GITHUB_DOMAIN) ?? DEFAULT_GITHUB_DOMAIN,
   );
   const clientId =
     options.clientId ??
-    env.HOOPILOT_GITHUB_CLIENT_ID ??
-    env.COPILOT_GITHUB_CLIENT_ID ??
+    envValue(env.HOOPILOT_GITHUB_CLIENT_ID) ??
+    envValue(env.COPILOT_GITHUB_CLIENT_ID) ??
     DEFAULT_GITHUB_COPILOT_CLIENT_ID;
 
   const device = await requestDeviceCode(fetcher, domain, clientId);

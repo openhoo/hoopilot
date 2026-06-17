@@ -6,7 +6,7 @@ import type {
   FetchLike,
   JsonObject,
 } from "./types";
-import { asRecord, isHttpsOrLoopbackUrl, trimTrailingSlash } from "./util";
+import { asRecord, envValue, isHttpsOrLoopbackUrl, trimTrailingSlash } from "./util";
 
 /** Default GitHub REST host that serves the `copilot_internal/user` quota route. */
 export const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
@@ -62,7 +62,7 @@ export class CopilotClient {
     this.#fetch = options.fetch ?? fetch;
     this.#githubApiBaseUrl = trimTrailingSlash(
       options.githubApiBaseUrl ??
-        options.env?.HOOPILOT_GITHUB_API_BASE_URL ??
+        envValue(options.env?.HOOPILOT_GITHUB_API_BASE_URL) ??
         DEFAULT_GITHUB_API_BASE_URL,
     );
   }

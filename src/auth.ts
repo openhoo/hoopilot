@@ -4,7 +4,7 @@ import {
   StoredCopilotAuthError,
 } from "./auth-store";
 import type { CopilotAccess, CopilotAuthOptions } from "./types";
-import { trimTrailingSlash } from "./util";
+import { envValue, trimTrailingSlash } from "./util";
 
 export const DEFAULT_COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 const REFRESH_SKEW_MS = 60_000;
@@ -24,14 +24,12 @@ export class CopilotAuth {
   #cachedAccess?: CopilotAccess;
 
   constructor(options: CopilotAuthOptions = {}) {
-    this.#authStorePath = options.authStorePath ?? options.env?.HOOPILOT_AUTH_FILE;
-    this.#hasCopilotApiBaseUrlOverride = Boolean(
-      options.copilotApiBaseUrl ?? options.env?.COPILOT_API_BASE_URL,
-    );
+    const envAuthStorePath = envValue(options.env?.HOOPILOT_AUTH_FILE);
+    const envCopilotApiBaseUrl = envValue(options.env?.COPILOT_API_BASE_URL);
+    this.#authStorePath = options.authStorePath ?? envAuthStorePath;
+    this.#hasCopilotApiBaseUrlOverride = Boolean(options.copilotApiBaseUrl ?? envCopilotApiBaseUrl);
     this.#copilotApiBaseUrl = trimTrailingSlash(
-      options.copilotApiBaseUrl ??
-        options.env?.COPILOT_API_BASE_URL ??
-        DEFAULT_COPILOT_API_BASE_URL,
+      options.copilotApiBaseUrl ?? envCopilotApiBaseUrl ?? DEFAULT_COPILOT_API_BASE_URL,
     );
   }
 

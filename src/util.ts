@@ -5,6 +5,12 @@ export function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+/** Treat blank environment variables as unset while preserving nonblank values. */
+export function envValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 /** True for HTTPS URLs, or HTTP only on loopback hosts used by local tests/dev. */
 export function isHttpsOrLoopbackUrl(rawUrl: string): boolean {
   let url: URL;

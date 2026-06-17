@@ -89,6 +89,38 @@ describe("githubCopilotDeviceLogin", () => {
     expect(requests[0]!.url).toBe("https://github.example/login/device/code");
   });
 
+  it("ignores blank GitHub env overrides from copied env files", async () => {
+    const requests: Request[] = [];
+    const fetcher: FetchLike = async (input, init) => {
+      requests.push(new Request(input, init));
+      if (requests.length === 1) {
+        return Response.json({
+          device_code: "device-code",
+          expires_in: 900,
+          interval: 1,
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+        });
+      }
+      return Response.json({ access_token: "oauth-token" });
+    };
+
+    const result = await githubCopilotDeviceLogin({
+      env: {
+        HOOPILOT_GITHUB_CLIENT_ID: "",
+        HOOPILOT_GITHUB_DOMAIN: "",
+      },
+      fetch: fetcher,
+      sleep: async () => {},
+    });
+
+    expect(result.domain).toBe("github.com");
+    expect(requests[0]!.url).toBe("https://github.com/login/device/code");
+    await expect(requests[0]!.json()).resolves.toMatchObject({
+      client_id: DEFAULT_GITHUB_COPILOT_CLIENT_ID,
+    });
+  });
+
   it("handles slow_down polling responses", async () => {
     const responses = [
       Response.json({
