@@ -71,7 +71,7 @@ describe("responsesRequestToChatCompletion", () => {
         },
         {
           content: [
-            { image_url: "data:image/png;base64,aaa", type: "input_image" },
+            { detail: "high", image_url: "data:image/png;base64,aaa", type: "input_image" },
             { text: "What is in this image?", type: "input_text" },
           ],
           role: "user",
@@ -96,7 +96,7 @@ describe("responsesRequestToChatCompletion", () => {
         }),
         expect.objectContaining({
           content: [
-            { image_url: { url: "data:image/png;base64,aaa" }, type: "image_url" },
+            { image_url: { detail: "high", url: "data:image/png;base64,aaa" }, type: "image_url" },
             { text: "What is in this image?", type: "text" },
           ],
           role: "user",
@@ -105,6 +105,59 @@ describe("responsesRequestToChatCompletion", () => {
     );
     expect(chat.tool_choice).toEqual({ function: { name: "lookup" }, type: "function" });
     expect(chat.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("rejects unsupported Responses inputs before dropping content", () => {
+    const unsupportedRequests = [
+      {
+        input: [
+          {
+            content: [{ file_id: "file_123", type: "input_file" }],
+            role: "user",
+            type: "message",
+          },
+        ],
+        message: "input_file parts",
+      },
+      {
+        input: [
+          {
+            content: [{ input_audio: { data: "aaa", format: "wav" }, type: "input_audio" }],
+            role: "user",
+            type: "message",
+          },
+        ],
+        message: "input_audio parts",
+      },
+      {
+        input: [
+          {
+            content: [{ file_id: "file_img", type: "input_image" }],
+            role: "user",
+            type: "message",
+          },
+        ],
+        message: "input_image file_id parts",
+      },
+      {
+        input: [{ id: "rs_1", type: "reasoning" }],
+        message: 'input item type "reasoning"',
+      },
+      {
+        input: [{ content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" }],
+        message: 'tool type "web_search_preview"',
+        tools: [{ type: "web_search_preview" }],
+      },
+      {
+        input: [{ content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" }],
+        message: 'tool_choice type "web_search_preview"',
+        tool_choice: { type: "web_search_preview" },
+      },
+    ];
+
+    for (const request of unsupportedRequests) {
+      expect(() => responsesRequestToChatCompletion(request)).toThrow(request.message);
+    }
   });
 
   it("preserves Responses API model names for upstream Responses routing", () => {

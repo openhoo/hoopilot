@@ -425,7 +425,8 @@ function inputToMessages(input: unknown): unknown[] {
   const messages: unknown[] = [];
   for (const item of input) {
     const record = asRecord(item);
-    if (record.type === "function_call_output") {
+    const type = contentToText(record.type);
+    if (type === "function_call_output") {
       messages.push({
         content: contentToText(record.output),
         role: "tool",
@@ -433,7 +434,7 @@ function inputToMessages(input: unknown): unknown[] {
       });
       continue;
     }
-    if (record.type === "function_call") {
+    if (type === "function_call") {
       messages.push({
         role: "assistant",
         tool_calls: [
@@ -449,7 +450,10 @@ function inputToMessages(input: unknown): unknown[] {
       });
       continue;
     }
-    const role = roleToChatRole(contentToText(record.role));
+    if (type && type !== "message") {
+      unsupportedResponsesFeature(`input item type "${type}"`);
+    }
+    const role = responsesRoleToChatRole(contentToText(record.role));
     const content = chatMessageContent(record.content);
     if (role && content !== undefined) {
       messages.push({ content, role });
@@ -463,7 +467,10 @@ function chatMessageContent(content: unknown): string | Array<JsonObject> | unde
     return content;
   }
   if (!Array.isArray(content)) {
-    return contentToText(content) || undefined;
+    if (content === undefined || content === null) {
+      return undefined;
+    }
+    unsupportedResponsesFeature("non-array message content objects");
   }
 
   const parts: JsonObject[] = [];
@@ -472,13 +479,31 @@ function chatMessageContent(content: unknown): string | Array<JsonObject> | unde
     const type = contentToText(record.type);
     if (type === "input_text" || type === "output_text" || type === "text") {
       parts.push({ text: contentToText(record.text), type: "text" });
+      continue;
     }
     if (type === "input_image") {
-      const imageUrl = contentToText(record.image_url);
-      if (imageUrl) {
-        parts.push({ image_url: { url: imageUrl }, type: "image_url" });
+      if (contentToText(record.file_id)) {
+        unsupportedResponsesFeature("input_image file_id parts");
       }
+      const imageUrl = contentToText(record.image_url);
+      if (!imageUrl) {
+        unsupportedResponsesFeature("input_image parts without image_url");
+      }
+      const image: JsonObject = { url: imageUrl };
+      const detail = contentToText(record.detail);
+      if (detail) {
+        image.detail = detail;
+      }
+      parts.push({ image_url: image, type: "image_url" });
+      continue;
     }
+    if (type === "input_file") {
+      unsupportedResponsesFeature("input_file parts");
+    }
+    if (type === "input_audio") {
+      unsupportedResponsesFeature("input_audio parts");
+    }
+    unsupportedResponsesFeature(`content part type "${type || "unknown"}"`);
   }
 
   if (parts.length === 0) {
@@ -551,29 +576,42 @@ function contentToText(content: unknown): string {
   return "";
 }
 
-function roleToChatRole(role: string): string | undefined {
-  if (role === "assistant" || role === "developer" || role === "system" || role === "tool") {
+function responsesRoleToChatRole(role: string): string | undefined {
+  if (!role) {
+    return "user";
+  }
+  if (
+    role === "assistant" ||
+    role === "developer" ||
+    role === "system" ||
+    role === "tool" ||
+    role === "user"
+  ) {
     return role === "developer" ? "system" : role;
   }
-  return "user";
+  unsupportedResponsesFeature(`message role "${role}"`);
 }
 
 function chatTools(tools: unknown): unknown[] | undefined {
   if (!Array.isArray(tools)) {
     return undefined;
   }
-  const converted = tools
-    .map((tool) => asRecord(tool))
-    .filter((tool) => tool.type === "function")
-    .map((tool) => ({
+  const converted = tools.map((tool) => {
+    const record = asRecord(tool);
+    const type = contentToText(record.type);
+    if (type !== "function") {
+      unsupportedResponsesFeature(`tool type "${type || "unknown"}"`);
+    }
+    return {
       function: removeUndefined({
-        description: tool.description,
-        name: tool.name,
-        parameters: tool.parameters,
-        strict: tool.strict,
+        description: record.description,
+        name: record.name,
+        parameters: record.parameters,
+        strict: record.strict,
       }),
       type: "function",
-    }));
+    };
+  });
   return converted.length > 0 ? converted : undefined;
 }
 
@@ -582,10 +620,17 @@ function chatToolChoice(toolChoice: unknown): unknown {
     return toolChoice;
   }
   const record = asRecord(toolChoice);
-  if (record.type === "function" && typeof record.name === "string") {
+  const type = contentToText(record.type);
+  if (type === "function" && typeof record.name === "string") {
     return { function: { name: record.name }, type: "function" };
   }
-  return toolChoice;
+  unsupportedResponsesFeature(`tool_choice type "${type || "unknown"}"`);
+}
+
+function unsupportedResponsesFeature(feature: string): never {
+  throw new OpenAICompatibilityError(
+    `Hoopilot Responses-to-chat compatibility does not support ${feature}.`,
+  );
 }
 
 function outputItemsFromMessage(message: Record<string, unknown>): JsonObject[] {
