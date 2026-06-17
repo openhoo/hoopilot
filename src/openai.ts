@@ -612,13 +612,31 @@ function responseUsage(usage: unknown): JsonObject | null {
   if (Object.keys(record).length === 0) {
     return null;
   }
+  const inputTokens = record.prompt_tokens;
+  const outputTokens = record.completion_tokens;
   return removeUndefined({
-    input_tokens: record.prompt_tokens,
-    input_tokens_details: record.prompt_tokens_details,
-    output_tokens: record.completion_tokens,
-    output_tokens_details: record.completion_tokens_details,
+    input_tokens: inputTokens,
+    input_tokens_details: responseUsageDetails(record.prompt_tokens_details, inputTokens, {
+      cached_tokens: 0,
+    }),
+    output_tokens: outputTokens,
+    output_tokens_details: responseUsageDetails(record.completion_tokens_details, outputTokens, {
+      reasoning_tokens: 0,
+    }),
     total_tokens: record.total_tokens,
   });
+}
+
+function responseUsageDetails(
+  value: unknown,
+  tokenCount: unknown,
+  fallback: JsonObject,
+): JsonObject | undefined {
+  const record = asRecord(value);
+  if (Object.keys(record).length > 0) {
+    return record;
+  }
+  return typeof tokenCount === "number" && Number.isFinite(tokenCount) ? fallback : undefined;
 }
 
 /**

@@ -178,7 +178,9 @@ describe("chatCompletionToResponse", () => {
     );
     expect(response.usage).toMatchObject({
       input_tokens: 4,
+      input_tokens_details: { cached_tokens: 0 },
       output_tokens: 2,
+      output_tokens_details: { reasoning_tokens: 0 },
       total_tokens: 6,
     });
   });
