@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
 import { main as codexxMain } from "./codexx";
@@ -156,6 +157,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--api-key":
         args.apiKey = value;
         break;
+      case "--api-key-file":
+        args.apiKey = readApiKeyFile(value);
+        break;
       case "--auth-file":
         args.authStorePath = value;
         break;
@@ -192,6 +196,14 @@ function splitOption(arg: string): [string, string | undefined] {
     return [arg, undefined];
   }
   return [arg.slice(0, separator), arg.slice(separator + 1)];
+}
+
+function readApiKeyFile(path: string): string {
+  const value = readFileSync(path, "utf8").trim();
+  if (!value) {
+    throw new Error(`API key file is empty: ${path}.`);
+  }
+  return value;
 }
 
 async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
@@ -454,6 +466,7 @@ Options:
   -p, --port <port>                 Port to listen on. Default: 4141
       --host <host>                 Host to listen on. Default: 127.0.0.1
       --api-key <key>               Require clients to send Authorization: Bearer <key> or x-api-key: <key>
+      --api-key-file <path>         Read the local API key from a file instead of argv
       --auth-file <path>            OAuth credential store path
       --copilot-api-base-url <url>  Copilot API base URL override
       --log-level <level>           trace, debug, info, warn, error, fatal, or silent

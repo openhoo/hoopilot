@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
@@ -39,6 +39,20 @@ describe("parseArgs", () => {
       apiKey: "abc=def",
       copilotApiBaseUrl: "https://api.githubcopilot.example/models?token=a=b",
     });
+  });
+
+  it("reads local API keys from files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-api-key-test-"));
+    try {
+      const keyPath = join(dir, "key");
+      writeFileSync(keyPath, "abc=def\n", "utf8");
+
+      expect(parseArgs(["--api-key-file", keyPath])).toMatchObject({
+        apiKey: "abc=def",
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   it("rejects removed token and auth mode options", () => {
