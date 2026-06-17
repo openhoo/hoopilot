@@ -355,6 +355,41 @@ describe("createHoopilotHandler", () => {
     });
   });
 
+  it("preserves upstream OpenAI-style JSON error objects", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () =>
+        Response.json(
+          {
+            error: {
+              code: "model_not_found",
+              message: "bad model",
+              param: "model",
+              type: "invalid_request_error",
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({ input: "hello" }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: "model_not_found",
+        message: "bad model",
+        param: "model",
+        type: "invalid_request_error",
+      },
+    });
+  });
+
   it("maps legacy completions upstream errors", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("legacy failed", { status: 502 })),

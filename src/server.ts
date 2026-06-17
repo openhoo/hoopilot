@@ -293,7 +293,7 @@ async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<R
     { event: "copilot.request.failed", upstreamStatus: upstream.status },
     "copilot upstream request failed",
   );
-  return jsonError(upstream.status, "copilot_error", text || upstream.statusText);
+  return upstreamErrorResponse(upstream.status, text || upstream.statusText);
 }
 
 function proxyResponse(upstream: Response): Response {
@@ -350,6 +350,14 @@ function jsonError(status: number, code: string, message: string): Response {
     },
     status,
   );
+}
+
+function upstreamErrorResponse(status: number, text: string): Response {
+  const parsedError = asRecord(asRecord(safeParseJson(text)).error);
+  if (Object.keys(parsedError).length > 0) {
+    return jsonResponse({ error: parsedError }, status);
+  }
+  return jsonError(status, "copilot_error", text);
 }
 
 function websocketUnsupportedResponse(): Response {
