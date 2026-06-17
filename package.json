@@ -49,9 +49,10 @@
     "test": "bun test",
     "test:coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
-    "check": "bun run biome:check && bun run typecheck && bun run test:coverage && bun run build",
+    "check": "bun run biome:check && bun run typecheck && bun run test:coverage && bun run build && bun run pack:check",
     "hooks:install": "if git rev-parse --git-dir >/dev/null 2>&1; then git config core.hooksPath .githooks; fi",
     "prepare": "bun run hooks:install",
+    "pack:check": "bun scripts/check-pack.ts",
     "prepack": "bun run build",
     "verify": "bun run typecheck && bun run test:coverage && bun run build"
   },
