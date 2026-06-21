@@ -60,7 +60,7 @@
     "@biomejs/biome": "^2.4.15",
     "@openhoo/hooversion": "0.1.1",
     "@types/bun": "^1.3.14",
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
   },
