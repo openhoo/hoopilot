@@ -1,9 +1,17 @@
 import { describe, expect, it } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStoredCopilotAuth } from "../src/auth-store";
-import { main, parseArgs, runModels, runUsage, verifyCopilotOAuthToken } from "../src/cli";
+import {
+  main,
+  openBrowserBestEffort,
+  parseArgs,
+  runModels,
+  runUsage,
+  verifyCopilotOAuthToken,
+} from "../src/cli";
 import type { FetchLike } from "../src/types";
 
 describe("parseArgs", () => {
@@ -127,6 +135,22 @@ describe("main", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^\d+\.\d+\.\d+/);
     expect(lines[1]).toBe(lines[0]);
+  });
+});
+
+describe("openBrowserBestEffort", () => {
+  it("ignores missing browser opener executables", async () => {
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    let unrefCalled = false;
+    child.unref = () => {
+      unrefCalled = true;
+    };
+
+    openBrowserBestEffort("https://github.com/login/device", () => child);
+    child.emit("error", Object.assign(new Error("spawn xdg-open ENOENT"), { code: "ENOENT" }));
+    await Promise.resolve();
+
+    expect(unrefCalled).toBe(true);
   });
 });
 

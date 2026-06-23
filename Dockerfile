@@ -36,14 +36,15 @@ LABEL org.opencontainers.image.source="https://github.com/openhoo/hoopilot" \
       org.opencontainers.image.description="OpenAI/Anthropic-compatible proxy for GitHub Copilot accounts" \
       org.opencontainers.image.licenses="MIT"
 
-# Service defaults. HOST=0.0.0.0 makes the proxy reachable from outside the
-# container; binding a non-loopback host requires HOOPILOT_API_KEY (set it at
-# run time) unless you pass --allow-unauthenticated.
+# Service defaults. HOST=0.0.0.0 makes the proxy reachable through Docker port
+# publishing. The image opts into no local API key by default; set
+# HOOPILOT_API_KEY to require clients to authenticate.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=4141 \
     HOOPILOT_LOG_FORMAT=json \
     HOOPILOT_LOG_LEVEL=info \
+    HOOPILOT_ALLOW_UNAUTHENTICATED=1 \
     HOOPILOT_NO_UPDATE_CHECK=1 \
     NO_UPDATE_NOTIFIER=1 \
     HOOPILOT_AUTH_FILE=/data/auth.json

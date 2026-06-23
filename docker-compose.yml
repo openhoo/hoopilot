@@ -5,13 +5,11 @@ services:
     # Run as a service: restart unless explicitly stopped.
     restart: unless-stopped
     ports:
-      - "4141:4141"
-    environment:
-      # Required when binding a non-loopback host (HOST=0.0.0.0). Clients must
-      # send `Authorization: Bearer <key>` or `x-api-key: <key>`.
-      HOOPILOT_API_KEY: "${HOOPILOT_API_KEY:?set HOOPILOT_API_KEY in your shell or .env}"
-      # HOST/PORT/auth-file/log defaults come from the image; override here.
-      # HOOPILOT_LOG_LEVEL: info
+      - "127.0.0.1:4141:4141"
+    # Optional: require clients to send `Authorization: Bearer <key>` or
+    # `x-api-key: <key>` when publishing the proxy beyond localhost.
+    # environment:
+    #   HOOPILOT_API_KEY: local-key
     volumes:
       # Persists the GitHub Copilot OAuth credential across restarts.
       - hoopilot-data:/data

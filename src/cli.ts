@@ -428,14 +428,31 @@ export async function verifyCopilotOAuthToken(
   };
 }
 
-function openBrowserBestEffort(url: string): void {
+type BrowserOpenerChild = {
+  on(event: "error", listener: (error: Error) => void): unknown;
+  unref(): void;
+};
+
+type BrowserOpenerSpawn = (
+  command: string,
+  args: string[],
+  options: {
+    detached: true;
+    stdio: "ignore";
+  },
+) => BrowserOpenerChild;
+
+export function openBrowserBestEffort(url: string, spawnOpener: BrowserOpenerSpawn = spawn): void {
   const platform = process.platform;
   const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
   try {
-    const child = spawn(command, args, {
+    const child = spawnOpener(command, args, {
       detached: true,
       stdio: "ignore",
+    });
+    child.on("error", () => {
+      // The device login code and URL were already printed.
     });
     child.unref();
   } catch {

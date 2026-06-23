@@ -58,17 +58,17 @@ Run Hoopilot as a long-lived service from the published multi-arch image on the 
 # 1. Sign in once; the OAuth credential is written to the persisted /data volume.
 docker run --rm -it -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login
 
-# 2. Run the proxy. An API key is required because the container binds 0.0.0.0.
+# 2. Run the proxy on localhost.
 docker run -d --name hoopilot --restart unless-stopped \
-  -p 4141:4141 -e HOOPILOT_API_KEY=local-key \
+  -p 127.0.0.1:4141:4141 \
   -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
 ```
 
-Tags follow the release version (e.g. `ghcr.io/openhoo/hoopilot:0.8`, `:0.8.3`) plus `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` (override with `HOOPILOT_AUTH_FILE`). A `docker-compose.yml` is provided in the repository:
+Tags follow the release version (e.g. `ghcr.io/openhoo/hoopilot:0.8`, `:0.8.3`) plus `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` (override with `HOOPILOT_AUTH_FILE`). The Docker image allows unauthenticated local clients by default; set `HOOPILOT_API_KEY` if you publish the port beyond localhost. A `docker-compose.yml` is provided in the repository:
 
 ```sh
 docker compose run --rm hoopilot login   # one-time GitHub OAuth
-HOOPILOT_API_KEY=local-key docker compose up -d
+docker compose up -d
 ```
 
 ## Update
