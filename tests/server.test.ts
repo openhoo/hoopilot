@@ -609,6 +609,7 @@ describe("createHoopilotHandler", () => {
       prompt: 3,
       total: 4,
     });
+    expect(metrics.snapshot().tokens.extraction).toEqual({ extracted: 1, missing: 0 });
   });
 
   it("serves Claude Code token-count preflights without an upstream request", async () => {

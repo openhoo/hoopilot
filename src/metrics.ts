@@ -55,6 +55,7 @@ export class MetricsRegistry {
   #upstream = new Map<string, number>();
   #copilotQuota?: CopilotUsage;
   #githubRateLimit = new Map<string, GithubRateLimit>();
+  #extraction = { extracted: 0, missing: 0 };
 
   constructor(options: { now?: () => number } = {}) {
     this.#startedAtMs = (options.now ?? Date.now)();
@@ -73,6 +74,20 @@ export class MetricsRegistry {
     const key = labelKey(observation.route, observation.method, String(observation.status));
     this.#requests.set(key, (this.#requests.get(key) ?? 0) + 1);
     this.#observeDuration(observation.route, observation.durationMs / 1000);
+  }
+
+  /**
+   * Record whether one upstream completion reported token usage. `missing`
+   * counts responses that carried no usage object — most often streamed Chat
+   * Completions sent without `stream_options: {"include_usage": true}` — so a
+   * rising miss rate flags clients whose token usage is going unaccounted.
+   */
+  recordTokenExtraction(extracted: boolean): void {
+    if (extracted) {
+      this.#extraction.extracted += 1;
+    } else {
+      this.#extraction.missing += 1;
+    }
   }
 
   /** Accumulate token counts for a model from one upstream completion. */
@@ -198,7 +213,7 @@ export class MetricsRegistry {
       inFlight: this.#inFlight,
       requests: { byRoute, byStatus, total: requestsTotal },
       startedAt: new Date(this.#startedAtMs).toISOString(),
-      tokens: { byModel, ...tokenTotals },
+      tokens: { byModel, extraction: { ...this.#extraction }, ...tokenTotals },
       upstream: { errors: upstreamErrors, total: upstreamTotal },
       uptimeSeconds: Math.max(0, Math.round((now() - this.#startedAtMs) / 1000)),
     };
@@ -256,6 +271,17 @@ export class MetricsRegistry {
     for (const [model, totals] of this.#tokens) {
       lines.push(`hoopilot_model_requests_total${labels({ model })} ${totals.requests}`);
     }
+
+    lines.push(
+      "# HELP hoopilot_token_extraction_total Completions by whether upstream reported token usage.",
+    );
+    lines.push("# TYPE hoopilot_token_extraction_total counter");
+    lines.push(
+      `hoopilot_token_extraction_total${labels({ outcome: "extracted" })} ${this.#extraction.extracted}`,
+    );
+    lines.push(
+      `hoopilot_token_extraction_total${labels({ outcome: "missing" })} ${this.#extraction.missing}`,
+    );
 
     lines.push("# HELP hoopilot_request_duration_seconds Request duration by route.");
     lines.push("# TYPE hoopilot_request_duration_seconds histogram");
@@ -458,6 +484,7 @@ export function observeResponseUsage(
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
   signal?: AbortSignal,
+  onOutcome?: (extracted: boolean) => void,
 ): Response {
   const body = response.body;
   if (!body) {
@@ -465,7 +492,9 @@ export function observeResponseUsage(
   }
   const [clientBranch, observerBranch] = body.tee();
   const isSse = response.headers.get("content-type")?.includes("text/event-stream") ?? false;
-  void consumeUsage(observerBranch, isSse, fallbackModel, onUsage, signal).catch(() => {});
+  void consumeUsage(observerBranch, isSse, fallbackModel, onUsage, signal, onOutcome).catch(
+    () => {},
+  );
   return new Response(clientBranch, {
     headers: response.headers,
     status: response.status,
@@ -479,8 +508,9 @@ export function recordResponseTextUsage(
   isSse: boolean,
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
+  onOutcome?: (extracted: boolean) => void,
 ): void {
-  const accumulator = createUsageAccumulator(fallbackModel, onUsage);
+  const accumulator = createUsageAccumulator(fallbackModel, onUsage, onOutcome);
   if (isSse) {
     for (const line of text.split(/\r?\n/)) {
       considerSseLine(line, accumulator.consider);
@@ -500,6 +530,7 @@ async function consumeUsage(
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
   signal?: AbortSignal,
+  onOutcome?: (extracted: boolean) => void,
 ): Promise<void> {
   const reader = stream.getReader();
   const onAbort = () => {
@@ -512,7 +543,16 @@ async function consumeUsage(
   }
 
   const decoder = new TextDecoder();
-  const accumulator = createUsageAccumulator(fallbackModel, onUsage);
+  // A client disconnect cancels the reader mid-stream; don't count that as a
+  // missing-usage completion — only record outcomes for streams we finished.
+  const guardedOutcome = onOutcome
+    ? (extracted: boolean) => {
+        if (!signal?.aborted) {
+          onOutcome(extracted);
+        }
+      }
+    : undefined;
+  const accumulator = createUsageAccumulator(fallbackModel, onUsage, guardedOutcome);
   let buffer = "";
   let bufferedBytes = 0;
   let overflowed = false;
@@ -568,6 +608,7 @@ async function consumeUsage(
 function createUsageAccumulator(
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
+  onOutcome?: (extracted: boolean) => void,
 ): { consider: (payload: unknown) => void; finish: () => void } {
   let model = fallbackModel;
   let usage: TokenUsage | undefined;
@@ -588,6 +629,7 @@ function createUsageAccumulator(
       if (usage) {
         onUsage(model, usage);
       }
+      onOutcome?.(usage !== undefined);
     },
   };
 }

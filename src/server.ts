@@ -63,6 +63,7 @@ interface UsageReadResult {
 
 type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
 type TokenRecorder = (model: string, usage: TokenUsage) => void;
+type ExtractionRecorder = (extracted: boolean) => void;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -81,6 +82,8 @@ export function createHoopilotHandler(
   const metrics = options.metrics ?? new MetricsRegistry();
   const readUsage = createUsageReader(client, metrics);
   const recordTokens: TokenRecorder = (model, usage) => metrics.recordTokens(model, usage);
+  const recordExtraction: ExtractionRecorder = (extracted) =>
+    metrics.recordTokenExtraction(extracted);
   const streamingProxyMode = resolveStreamingProxyMode(options);
   const bufferProxyBodies = shouldBufferProxyBodies(streamingProxyMode);
 
@@ -152,6 +155,7 @@ export function createHoopilotHandler(
             client,
             metrics,
             recordTokens,
+            recordExtraction,
             request,
             requestLogger,
             bufferProxyBodies,
@@ -167,6 +171,7 @@ export function createHoopilotHandler(
             client,
             metrics,
             recordTokens,
+            recordExtraction,
             request,
             requestLogger,
             bufferProxyBodies,
@@ -179,6 +184,7 @@ export function createHoopilotHandler(
             client,
             metrics,
             recordTokens,
+            recordExtraction,
             request,
             requestLogger,
             bufferProxyBodies,
@@ -187,7 +193,14 @@ export function createHoopilotHandler(
       }
       if (request.method === "POST" && apiPath === "/v1/responses/compact") {
         return finish(
-          await handleResponsesCompact(client, metrics, recordTokens, request, requestLogger),
+          await handleResponsesCompact(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            requestLogger,
+          ),
         );
       }
       if (request.method === "POST" && apiPath === "/v1/responses") {
@@ -196,6 +209,7 @@ export function createHoopilotHandler(
             client,
             metrics,
             recordTokens,
+            recordExtraction,
             request,
             requestLogger,
             bufferProxyBodies,
@@ -285,6 +299,7 @@ async function handleAnthropicMessages(
   client: CopilotClient,
   metrics: MetricsRegistry,
   recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
@@ -302,12 +317,18 @@ async function handleAnthropicMessages(
   if (isStreamingResponse(upstream) && upstream.body) {
     if (bufferProxyBodies) {
       const text = await upstream.text();
-      recordResponseTextUsage(text, true, model, recordTokens);
+      recordResponseTextUsage(text, true, model, recordTokens, recordExtraction);
       return proxyResponse(
         responseFromText(upstream, responsesSseTextToAnthropicSseText(text, { model })),
       );
     }
-    const observed = observeResponseUsage(upstream, model, recordTokens, request.signal);
+    const observed = observeResponseUsage(
+      upstream,
+      model,
+      recordTokens,
+      request.signal,
+      recordExtraction,
+    );
     if (!observed.body) {
       return proxyResponse(observed);
     }
@@ -326,6 +347,7 @@ async function handleAnthropicMessages(
     const responseModel = typeof body.model === "string" ? body.model.trim() : "";
     recordTokens(responseModel || model, usage);
   }
+  recordExtraction(usage !== undefined);
   return jsonResponse(responsesResponseToAnthropicMessage(body, model));
 }
 
@@ -363,6 +385,7 @@ async function handleChatCompletions(
   client: CopilotClient,
   metrics: MetricsRegistry,
   recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
@@ -382,6 +405,7 @@ async function handleChatCompletions(
       recordTokens,
       request.signal,
       bufferProxyBodies,
+      recordExtraction,
     ),
   );
 }
@@ -390,6 +414,7 @@ async function handleCompletions(
   client: CopilotClient,
   metrics: MetricsRegistry,
   recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
@@ -410,7 +435,7 @@ async function handleCompletions(
   if (isStreamingResponse(upstream) && upstream.body) {
     if (bufferProxyBodies) {
       const upstreamText = await upstream.text();
-      recordResponseTextUsage(upstreamText, true, model, recordTokens);
+      recordResponseTextUsage(upstreamText, true, model, recordTokens, recordExtraction);
       const text = completionSseTextFromChatSseText(upstreamText);
       return proxyResponse(responseFromText(upstream, text));
     }
@@ -424,6 +449,7 @@ async function handleCompletions(
         model,
         recordTokens,
         request.signal,
+        recordExtraction,
       ),
     );
   }
@@ -433,6 +459,7 @@ async function handleCompletions(
     const responseModel = typeof completion.model === "string" ? completion.model.trim() : "";
     recordTokens(responseModel || model, usage);
   }
+  recordExtraction(usage !== undefined);
   return jsonResponse(chatCompletionToCompletion(completion));
 }
 
@@ -440,6 +467,7 @@ async function handleResponses(
   client: CopilotClient,
   metrics: MetricsRegistry,
   recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
@@ -459,6 +487,7 @@ async function handleResponses(
       recordTokens,
       request.signal,
       bufferProxyBodies,
+      recordExtraction,
     ),
   );
 }
@@ -476,6 +505,7 @@ async function handleResponsesCompact(
   client: CopilotClient,
   metrics: MetricsRegistry,
   recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
 ): Promise<Response> {
@@ -491,7 +521,13 @@ async function handleResponsesCompact(
   logUpstreamSuccess(logger, "/responses", upstream.status);
   const isSse = isStreamingResponse(upstream);
   const text = await upstream.text();
-  recordResponseTextUsage(text, isSse, normalizeRequestedModel(body.model), recordTokens);
+  recordResponseTextUsage(
+    text,
+    isSse,
+    normalizeRequestedModel(body.model),
+    recordTokens,
+    recordExtraction,
+  );
   return jsonResponse(responsesCompactionResult(text, isSse));
 }
 
@@ -501,14 +537,15 @@ async function responseWithObservedUsage(
   recordTokens: TokenRecorder,
   signal: AbortSignal,
   bufferBody: boolean,
+  recordExtraction: ExtractionRecorder,
 ): Promise<Response> {
   const isSse = isStreamingResponse(response);
   if (bufferBody && response.body) {
     const text = await response.text();
-    recordResponseTextUsage(text, isSse, fallbackModel, recordTokens);
+    recordResponseTextUsage(text, isSse, fallbackModel, recordTokens, recordExtraction);
     return responseFromText(response, text);
   }
-  return observeResponseUsage(response, fallbackModel, recordTokens, signal);
+  return observeResponseUsage(response, fallbackModel, recordTokens, signal, recordExtraction);
 }
 
 function responseFromText(source: Response, text: string): Response {

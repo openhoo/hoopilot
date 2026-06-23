@@ -171,6 +171,7 @@ export interface MetricsSnapshot {
     byModel: Record<string, ModelTokenTotals>;
     cached: number;
     completion: number;
+    extraction: { extracted: number; missing: number };
     prompt: number;
     reasoning: number;
     total: number;

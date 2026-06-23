@@ -276,6 +276,19 @@ describe("MetricsRegistry", () => {
     expect(text).not.toContain("hoopilot_github_ratelimit_retry_after_seconds");
     expect(Object.keys(metrics.snapshot().githubRateLimit)).toEqual(["core"]);
   });
+
+  it("counts token-extraction outcomes", () => {
+    const metrics = new MetricsRegistry();
+    metrics.recordTokenExtraction(true);
+    metrics.recordTokenExtraction(true);
+    metrics.recordTokenExtraction(false);
+
+    const text = metrics.renderPrometheus();
+    expect(text).toContain("# TYPE hoopilot_token_extraction_total counter");
+    expect(text).toContain('hoopilot_token_extraction_total{outcome="extracted"} 2');
+    expect(text).toContain('hoopilot_token_extraction_total{outcome="missing"} 1');
+    expect(metrics.snapshot().tokens.extraction).toEqual({ extracted: 2, missing: 1 });
+  });
 });
 
 describe("observeResponseUsage", () => {
@@ -401,6 +414,80 @@ describe("observeResponseUsage", () => {
     await delay(10);
 
     expect(sink).toHaveLength(0);
+  });
+
+  it("reports an extracted outcome when usage is present", async () => {
+    const { promise, recorder } = makeRecorder();
+    const outcomes: boolean[] = [];
+    const upstream = Response.json({
+      model: "gpt-4.1",
+      usage: { completion_tokens: 3, prompt_tokens: 7, total_tokens: 10 },
+    });
+
+    const observed = observeResponseUsage(upstream, "fallback", recorder, undefined, (extracted) =>
+      outcomes.push(extracted),
+    );
+    await observed.json();
+    await promise;
+
+    expect(outcomes).toEqual([true]);
+  });
+
+  it("reports a missing outcome when a streamed response omits usage", async () => {
+    const outcomes: boolean[] = [];
+    const sse = 'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n';
+
+    const observed = observeResponseUsage(
+      sseResponse(sse),
+      "gpt-4.1",
+      () => {},
+      undefined,
+      (extracted) => outcomes.push(extracted),
+    );
+    await observed.text();
+    await delay(10);
+
+    expect(outcomes).toEqual([false]);
+  });
+
+  it("does not report an outcome when the request is aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const outcomes: boolean[] = [];
+    const sse =
+      'data: {"choices":[],"usage":{"completion_tokens":2,"prompt_tokens":5,"total_tokens":7}}\n\n';
+
+    const observed = observeResponseUsage(
+      sseResponse(sse),
+      "gpt-4.1",
+      () => {},
+      controller.signal,
+      (extracted) => outcomes.push(extracted),
+    );
+    await observed.text().catch(() => {});
+    await delay(10);
+
+    expect(outcomes).toEqual([]);
+  });
+
+  it("reports the extraction outcome from buffered text", () => {
+    const outcomes: boolean[] = [];
+    recordResponseTextUsage(
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n',
+      true,
+      "gpt-4.1",
+      () => {},
+      (extracted) => outcomes.push(extracted),
+    );
+    recordResponseTextUsage(
+      '{"model":"gpt-4.1","usage":{"completion_tokens":1,"prompt_tokens":1,"total_tokens":2}}',
+      false,
+      "gpt-4.1",
+      () => {},
+      (extracted) => outcomes.push(extracted),
+    );
+
+    expect(outcomes).toEqual([false, true]);
   });
 });
 
