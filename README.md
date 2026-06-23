@@ -18,39 +18,38 @@ This project uses GitHub Copilot service endpoints and is not an official GitHub
 
 ## Quick start
 
-Sign in once, then start the proxy:
+Sign in once, then start the proxy on localhost:
 
 ```sh
 npx @openhoo/hoopilot login
-HOOPILOT_API_KEY=local-key npx @openhoo/hoopilot
-```
-
-PowerShell:
-
-```powershell
-npx @openhoo/hoopilot login
-$env:HOOPILOT_API_KEY = "local-key"
 npx @openhoo/hoopilot
 ```
 
-Point OpenAI-compatible clients at the local server:
+By default the server listens on `127.0.0.1:4141` and accepts local requests without authentication, so any placeholder works as the client key:
 
 ```sh
 export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
-export OPENAI_API_KEY=local-key
+export OPENAI_API_KEY=hoopilot
 ```
 
 PowerShell:
 
 ```powershell
 $env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
-$env:OPENAI_API_KEY = "local-key"
+$env:OPENAI_API_KEY = "hoopilot"
+```
+
+To require clients to authenticate — recommended whenever you expose the proxy beyond localhost — set `HOOPILOT_API_KEY` to a strong, unique secret and send that value as the client key:
+
+```sh
+export HOOPILOT_API_KEY=$(openssl rand -hex 24)
+npx @openhoo/hoopilot
 ```
 
 Run Codex through Hoopilot after the server is running:
 
 ```sh
-HOOPILOT_API_KEY=local-key npx --package @openhoo/hoopilot codexx
+npx --package @openhoo/hoopilot codexx
 ```
 
 ## Install
@@ -106,20 +105,23 @@ Run Hoopilot as a long-lived service from the published multi-arch image on the 
 # 1. Sign in once; the OAuth credential is written to the persisted /data volume.
 docker run --rm -it -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login
 
-# 2. Run the proxy on localhost.
+# 2. Run the proxy on localhost with a strong, unique API key.
+export HOOPILOT_API_KEY=$(openssl rand -hex 24)
 docker run -d --name hoopilot --restart unless-stopped \
   -p 127.0.0.1:4141:4141 \
+  -e HOOPILOT_API_KEY \
   -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
 ```
 
-Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:0.10`, `:0.10.0`, and `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
+Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:0.10`, `:0.10.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
 
-The Docker image allows unauthenticated local clients by default so the compose file works out of the box. Set `HOOPILOT_API_KEY` before publishing the port beyond localhost.
+Because it binds a non-loopback interface, the image fails closed: it refuses to start unless you set `HOOPILOT_API_KEY` to a strong, unique secret (well-known demo keys are rejected). Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`. To intentionally run without authentication — for example behind your own authenticating proxy — set `HOOPILOT_ALLOW_UNAUTHENTICATED=1`.
 
-A `docker-compose.yml` is provided:
+A `docker-compose.yml` is provided. Set `HOOPILOT_API_KEY` first; compose passes it through to the container:
 
 ```sh
 docker compose run --rm hoopilot login
+export HOOPILOT_API_KEY=$(openssl rand -hex 24)
 docker compose up -d
 ```
 
@@ -154,9 +156,11 @@ Start the server:
 hoopilot --port 4141
 ```
 
-By default Hoopilot listens on `127.0.0.1:4141`. If `HOOPILOT_API_KEY` is unset, local requests are accepted without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` or `HOOPILOT_ALLOW_UNAUTHENTICATED=1` is set.
+By default Hoopilot listens on `127.0.0.1:4141`. If `HOOPILOT_API_KEY` is unset, local requests are accepted without client authentication. Binding to a non-loopback host requires either a strong, unique `HOOPILOT_API_KEY` or the explicit `--allow-unauthenticated` / `HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in. Well-known demo keys are always rejected on a non-loopback host, even with the unauthenticated opt-in.
 
 When an API key is configured, clients may send it as either `Authorization: Bearer <key>` or `x-api-key: <key>`.
+
+Cross-origin browser requests are always blocked, even when an API key is set, so a malicious web page cannot drive the local proxy. Requests from loopback origins are allowed; to permit specific web origins, list them in `HOOPILOT_ALLOWED_ORIGINS` (comma-separated).
 
 ## Client setup
 
@@ -164,8 +168,10 @@ When an API key is configured, clients may send it as either `Authorization: Bea
 
 ```sh
 export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
-export OPENAI_API_KEY=local-key
+export OPENAI_API_KEY=hoopilot
 ```
+
+The client key value is arbitrary when the server runs without `HOOPILOT_API_KEY`; if you set one, use that value here instead.
 
 Use any model returned by:
 
@@ -177,7 +183,7 @@ hoopilot models
 
 ```sh
 export ANTHROPIC_BASE_URL=http://127.0.0.1:4141
-export ANTHROPIC_AUTH_TOKEN=local-key
+export ANTHROPIC_AUTH_TOKEN=hoopilot
 claude
 ```
 
@@ -188,16 +194,18 @@ Hoopilot accepts the local key as `x-api-key` too, so `ANTHROPIC_API_KEY` also w
 Use the bundled `codexx` command after Hoopilot is running:
 
 ```sh
-HOOPILOT_API_KEY=local-key codexx
+codexx
 ```
 
 Without a global install:
 
 ```sh
-HOOPILOT_API_KEY=local-key npx --package @openhoo/hoopilot codexx
+npx --package @openhoo/hoopilot codexx
 ```
 
-`codexx` does not start Hoopilot and does not alter your shell environment. It starts `codex` with a temporary `hoopilot` model provider pointed at `http://127.0.0.1:4141/v1`, uses the Responses API wire format, disables Responses WebSockets for that provider, maps `HOOPILOT_API_KEY` to `OPENAI_API_KEY` for the child process, passes `--disable network_proxy`, and removes standard proxy variables from the spawned Codex process.
+If the server requires an API key, set `HOOPILOT_API_KEY` (or `CODEXX_API_KEY`) in the `codexx` environment to match.
+
+`codexx` does not start Hoopilot and does not alter your shell environment. It starts `codex` with a temporary `hoopilot` model provider pointed at `http://127.0.0.1:4141/v1`, uses the Responses API wire format, disables Responses WebSockets for that provider, maps `HOOPILOT_API_KEY` (or a random throwaway key when none is set) to `OPENAI_API_KEY` for the child process, passes `--disable network_proxy`, and removes standard proxy variables from the spawned Codex process.
 
 `codexx` defaults to `gpt-5.5` with `model_reasoning_effort="xhigh"`. Before starting Codex, it checks `/v1/models` and reports if the logged-in Copilot account does not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models, or log in with a Copilot account that has access to the default model.
 
@@ -279,15 +287,17 @@ Verify browser login and the local proxy before retrying Codex:
 
 ```sh
 hoopilot login
-HOOPILOT_API_KEY=local-key hoopilot --port 4141
+hoopilot --port 4141
 ```
 
 Then, in another shell:
 
 ```sh
-curl -H "Authorization: Bearer local-key" http://127.0.0.1:4141/v1/models
-HOOPILOT_API_KEY=local-key codexx
+curl http://127.0.0.1:4141/v1/models
+codexx
 ```
+
+If you started the server with `HOOPILOT_API_KEY`, add `-H "Authorization: Bearer $HOOPILOT_API_KEY"` to the curl command and set the same `HOOPILOT_API_KEY` for `codexx`.
 
 If `/v1/models` returns `401 copilot_auth_error`, rerun `hoopilot login` and confirm that the GitHub account has active Copilot access.
 
@@ -299,8 +309,9 @@ Server and local-client settings:
 | --- | --- |
 | `HOST` / `--host` | Host to listen on. Default: `127.0.0.1` for local runs; Docker sets `0.0.0.0`. |
 | `PORT` / `--port` | Port to listen on. Default: `4141`. |
-| `HOOPILOT_API_KEY` / `--api-key` | Require clients to send `Authorization: Bearer <key>` or `x-api-key: <key>`. |
+| `HOOPILOT_API_KEY` / `--api-key` | Require clients to send `Authorization: Bearer <key>` or `x-api-key: <key>`. Must be a strong, unique secret on non-loopback binds; well-known demo keys are rejected. |
 | `--api-key-file` | Read the local API key from a file instead of argv. |
+| `HOOPILOT_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to make cross-origin requests. Loopback origins are always allowed; every other origin is blocked. |
 | `HOOPILOT_ALLOW_UNAUTHENTICATED` / `--allow-unauthenticated` | Allow non-loopback binds without a local API key. |
 | `HOOPILOT_STREAM_MODE` / `--stream-mode` | `auto`, `live`, or `buffer`. `auto` buffers streams for Windows standalone binaries. |
 
@@ -328,7 +339,7 @@ Logging and update settings:
 | Setting | Description |
 | --- | --- |
 | `CODEXX_BASE_URL` | OpenAI-compatible Hoopilot base URL. Default: `http://127.0.0.1:4141/v1`. |
-| `CODEXX_API_KEY` | API key sent to Hoopilot. Falls back to `HOOPILOT_API_KEY`, then `local-key`. |
+| `CODEXX_API_KEY` | API key sent to Hoopilot. Falls back to `HOOPILOT_API_KEY`, then a random per-run key for an unauthenticated local server. |
 | `CODEXX_CODEX_BIN` | Codex executable to run. Default: `codex`. |
 | `CODEXX_MODEL` | Codex model to use. Default: `gpt-5.5`. |
 | `CODEXX_MODEL_REASONING_EFFORT` | Codex reasoning effort. Default: `xhigh`. |

@@ -76,9 +76,22 @@ describe("buildCodexxInvocation", () => {
       return Response.json({ data: [{ id: "gpt-5.5" }] });
     });
 
-    expect(invocation.env.OPENAI_API_KEY).toBe("local-key");
-    expect(requests[0]!.headers.get("authorization")).toBe("Bearer local-key");
+    const generatedKey = invocation.env.OPENAI_API_KEY ?? "";
+    expect(generatedKey).not.toBe("sk-real-openai-key");
+    expect(generatedKey).toMatch(/^codexx-[0-9a-f-]{36}$/);
+    expect(requests[0]!.headers.get("authorization")).toBe(`Bearer ${generatedKey}`);
     expect(requests[0]!.headers.get("authorization")).not.toContain("sk-real-openai-key");
+  });
+
+  it("does not fall back to a public default key when no key is configured", () => {
+    const first = buildCodexxInvocation([], { PATH: "/usr/bin" });
+    const second = buildCodexxInvocation([], { PATH: "/usr/bin" });
+
+    // The old behavior leaked the predictable, public "local-key" as a credential.
+    expect(first.env.OPENAI_API_KEY).not.toBe("local-key");
+    expect(first.env.OPENAI_API_KEY).toMatch(/^codexx-[0-9a-f-]{36}$/);
+    // Each invocation gets its own throwaway key, so nothing predictable is reused.
+    expect(first.env.OPENAI_API_KEY).not.toBe(second.env.OPENAI_API_KEY);
   });
 
   it("preflights the requested model against the local models endpoint", async () => {

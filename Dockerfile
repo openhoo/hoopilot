@@ -36,15 +36,17 @@ LABEL org.opencontainers.image.source="https://github.com/openhoo/hoopilot" \
       org.opencontainers.image.description="OpenAI/Anthropic-compatible proxy for GitHub Copilot accounts" \
       org.opencontainers.image.licenses="MIT"
 
-# Service defaults. HOST=0.0.0.0 makes the proxy reachable through Docker port
-# publishing. The image opts into no local API key by default; set
-# HOOPILOT_API_KEY to require clients to authenticate.
+# Service defaults. HOST=0.0.0.0 is required so Docker port publishing can reach
+# the proxy. Because the container cannot tell whether the published port is
+# loopback-only, the image fails closed: hoopilot refuses to start on this
+# non-loopback host unless HOOPILOT_API_KEY is set to a strong, unique secret.
+# To intentionally run without authentication (e.g. behind your own auth proxy),
+# set HOOPILOT_ALLOW_UNAUTHENTICATED=1.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=4141 \
     HOOPILOT_LOG_FORMAT=json \
     HOOPILOT_LOG_LEVEL=info \
-    HOOPILOT_ALLOW_UNAUTHENTICATED=1 \
     HOOPILOT_NO_UPDATE_CHECK=1 \
     NO_UPDATE_NOTIFIER=1 \
     HOOPILOT_AUTH_FILE=/data/auth.json

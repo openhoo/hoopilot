@@ -120,6 +120,103 @@ describe("createHoopilotHandler", () => {
     expect(response.status).toBe(200);
   });
 
+  it("blocks cross-origin browser requests even when an API key is configured", async () => {
+    let calls = 0;
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => {
+        calls += 1;
+        return Response.json({ data: [{ id: "gpt-4.1" }] });
+      }),
+      apiKey: "local-key",
+    });
+
+    // A malicious page's preflight is refused and exposes no readable CORS grant.
+    const preflight = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: {
+          "access-control-request-headers": "authorization",
+          "access-control-request-method": "GET",
+          origin: "https://evil.example",
+        },
+        method: "OPTIONS",
+      }),
+    );
+    expect(preflight.status).toBe(403);
+    expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+
+    // Even knowing the key, the actual cross-origin request is refused before upstream.
+    const actual = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: { authorization: "Bearer local-key", origin: "https://evil.example" },
+      }),
+    );
+    expect(actual.status).toBe(403);
+    expect(actual.headers.get("access-control-allow-origin")).toBeNull();
+    await expect(actual.json()).resolves.toMatchObject({ error: { code: "forbidden_origin" } });
+    expect(calls).toBe(0);
+  });
+
+  it("reflects an allowed origin instead of advertising a wildcard", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => Response.json({ data: [{ id: "gpt-4.1" }] })),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: { origin: "http://localhost:3000" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    expect(response.headers.get("vary")).toContain("Origin");
+  });
+
+  it("answers a loopback CORS preflight with the reflected origin", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => Response.json({ data: [{ id: "gpt-4.1" }] })),
+    );
+
+    const preflight = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: {
+          "access-control-request-headers": "authorization",
+          "access-control-request-method": "GET",
+          origin: "http://localhost:3000",
+        },
+        method: "OPTIONS",
+      }),
+    );
+
+    expect(preflight.status).toBe(200);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    expect(preflight.headers.get("vary")).toContain("Origin");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
+  });
+
+  it("permits cross-origin requests only from explicitly allowlisted origins", async () => {
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => Response.json({ data: [{ id: "gpt-4.1" }] })),
+      env: { HOOPILOT_ALLOWED_ORIGINS: "https://app.example, https://other.example" },
+    });
+
+    const allowed = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: { origin: "https://app.example" },
+      }),
+    );
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://app.example");
+
+    const blocked = await handler(
+      new Request("http://localhost/v1/models", {
+        headers: { origin: "https://not-allowed.example" },
+      }),
+    );
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("adds request ids and emits structured request completion logs", async () => {
     const logs = captureLogger();
     const handler = createHoopilotHandler({
@@ -1001,6 +1098,71 @@ describe("createHoopilotHandler", () => {
         port: 0,
       }),
     ).toThrow("non-loopback");
+  });
+
+  it("refuses to start with the Docker image's default environment and no API key", () => {
+    // Mirrors the shipped Dockerfile ENV (HOST=0.0.0.0, no HOOPILOT_API_KEY, no
+    // HOOPILOT_ALLOW_UNAUTHENTICATED), which must now fail closed.
+    expect(() =>
+      startHoopilotServer({
+        env: {
+          HOOPILOT_AUTH_FILE: "/data/auth.json",
+          HOOPILOT_LOG_FORMAT: "json",
+          HOOPILOT_LOG_LEVEL: "info",
+          HOST: "0.0.0.0",
+          PORT: "0",
+        },
+        fetch: unusedFetch,
+      }),
+    ).toThrow("non-loopback");
+  });
+
+  it("refuses a non-loopback start when HOOPILOT_API_KEY is an empty string", () => {
+    // docker-compose passes `${HOOPILOT_API_KEY:-}`, which substitutes to "" when
+    // the operator has not exported a key. That blank value must still fail closed.
+    expect(() =>
+      startHoopilotServer({
+        env: { HOOPILOT_API_KEY: "", HOST: "0.0.0.0", PORT: "0" },
+        fetch: unusedFetch,
+      }),
+    ).toThrow("non-loopback");
+  });
+
+  it("refuses a non-loopback start that uses a well-known demo API key", () => {
+    expect(() =>
+      startHoopilotServer({
+        apiKey: "local-key",
+        env: {},
+        fetch: unusedFetch,
+        host: "0.0.0.0",
+        port: 0,
+      }),
+    ).toThrow("well-known demo");
+  });
+
+  it("starts on a non-loopback host with a strong API key", () => {
+    const started = startHoopilotServer({
+      apiKey: "s3cret-strong-and-unique-key",
+      env: {},
+      fetch: unusedFetch,
+      host: "0.0.0.0",
+      port: 0,
+    });
+
+    expect(started.url).toContain(":");
+    started.server.stop(true);
+  });
+
+  it("allows an explicit non-loopback unauthenticated opt-in", () => {
+    const started = startHoopilotServer({
+      allowUnauthenticated: true,
+      env: {},
+      fetch: unusedFetch,
+      host: "0.0.0.0",
+      port: 0,
+    });
+
+    started.server.stop(true);
   });
 
   it("rejects invalid server ports from the environment", () => {

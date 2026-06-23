@@ -6,7 +6,6 @@ import type { FetchLike } from "./types";
 import { envValue } from "./util";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
-const DEFAULT_API_KEY = "local-key";
 const DEFAULT_CODEX_BIN = "codex";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_REASONING_EFFORT = "xhigh";
@@ -34,7 +33,12 @@ export function buildCodexxInvocation(
   env: NodeJS.ProcessEnv = process.env,
 ): CodexxInvocation {
   const baseUrl = envValue(env.CODEXX_BASE_URL) ?? DEFAULT_BASE_URL;
-  const apiKey = envValue(env.CODEXX_API_KEY) ?? envValue(env.HOOPILOT_API_KEY) ?? DEFAULT_API_KEY;
+  // Never fall back to a public, predictable key: a shared constant like the old
+  // "local-key" default is also a credential a malicious local/browser client
+  // could guess. When no key is configured the local server is expected to run
+  // unauthenticated, which accepts any value, so a random throwaway key is safe.
+  const apiKey =
+    envValue(env.CODEXX_API_KEY) ?? envValue(env.HOOPILOT_API_KEY) ?? generateEphemeralApiKey();
   const command = envValue(env.CODEXX_CODEX_BIN) ?? DEFAULT_CODEX_BIN;
   const model = envValue(env.CODEXX_MODEL) ?? DEFAULT_MODEL;
   const reasoningEffort = envValue(env.CODEXX_MODEL_REASONING_EFFORT) ?? DEFAULT_REASONING_EFFORT;
@@ -68,6 +72,13 @@ export function buildCodexxInvocation(
     }),
     model,
   };
+}
+
+// A random, non-guessable placeholder key for when neither CODEXX_API_KEY nor
+// HOOPILOT_API_KEY is set. An unauthenticated local Hoopilot accepts any value;
+// a keyed server rejects it with a 401, which the model preflight surfaces.
+function generateEphemeralApiKey(): string {
+  return `codexx-${crypto.randomUUID()}`;
 }
 
 function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -118,7 +129,7 @@ export async function verifyCodexxModel(
     response = await fetcher(modelsUrl, {
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${invocation.env.OPENAI_API_KEY ?? DEFAULT_API_KEY}`,
+        authorization: `Bearer ${invocation.env.OPENAI_API_KEY ?? generateEphemeralApiKey()}`,
       },
       method: "GET",
     });
@@ -153,7 +164,9 @@ Usage:
 Environment:
   CODEXX_BASE_URL      OpenAI-compatible base URL. Default: ${DEFAULT_BASE_URL}
   CODEXX_API_KEY       API key sent to the local Hoopilot server.
-  HOOPILOT_API_KEY     Used as the API key when CODEXX_API_KEY is unset.
+  HOOPILOT_API_KEY     Used as the API key when CODEXX_API_KEY is unset. When
+                       neither is set, a random throwaway key is generated for
+                       an unauthenticated local server.
   CODEXX_CODEX_BIN     Codex executable to run. Default: ${DEFAULT_CODEX_BIN}
   CODEXX_MODEL         Codex model to use. Default: ${DEFAULT_MODEL}
   CODEXX_MODEL_REASONING_EFFORT

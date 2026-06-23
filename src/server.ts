@@ -44,7 +44,11 @@ import { IS_STANDALONE_BINARY } from "./version";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
 const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
-  "Browser-origin requests require HOOPILOT_API_KEY unless the Origin is loopback.";
+  "Cross-origin browser requests are blocked unless the Origin is loopback or listed in HOOPILOT_ALLOWED_ORIGINS.";
+// API keys we ship in docs/examples as placeholders. They are effectively public,
+// so refusing them on non-loopback binds keeps a credential-backed proxy from being
+// reachable on a network with a guessable key.
+const WELL_KNOWN_DEMO_API_KEYS = new Set(["local-key"]);
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
 const JSON_OBJECT_MESSAGE = "Request body must be a JSON object.";
 const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
@@ -72,6 +76,7 @@ export function createHoopilotHandler(
 ): (request: Request) => Promise<Response> {
   const client = new CopilotClient(options);
   const apiKey = options.apiKey ?? envValue(options.env?.HOOPILOT_API_KEY);
+  const allowedOrigins = parseAllowedOrigins(options.env);
   const logger = serverLogger(options);
   const metrics = options.metrics ?? new MetricsRegistry();
   const readUsage = createUsageReader(client, metrics);
@@ -92,8 +97,11 @@ export function createHoopilotHandler(
       route,
     });
     metrics.startRequest();
+    const origin = request.headers.get("origin")?.trim() || undefined;
+    const corsOrigin = resolveCorsAllowOrigin(origin, allowedOrigins);
     const finish = (response: Response): Response =>
       finishResponse(response, {
+        corsOrigin,
         logger: requestLogger,
         method: request.method,
         metrics,
@@ -104,11 +112,11 @@ export function createHoopilotHandler(
         trackStreamingBody: !bufferProxyBodies,
       });
 
-    const browserOrigin = forbiddenBrowserOrigin(request, apiKey);
+    const browserOrigin = forbiddenBrowserOrigin(origin, request, allowedOrigins);
     if (browserOrigin) {
       requestLogger.warn(
         { event: "http.request.forbidden_origin", origin: browserOrigin },
-        "blocked unauthenticated browser-origin request",
+        "blocked cross-origin browser request",
       );
       return finish(jsonError(403, "forbidden_origin", FORBIDDEN_BROWSER_ORIGIN_MESSAGE));
     }
@@ -243,10 +251,17 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
   const allowUnauthenticated =
     options.allowUnauthenticated ?? envValue(options.env?.HOOPILOT_ALLOW_UNAUTHENTICATED) === "1";
 
-  if (!isLoopbackHost(host) && !apiKey && !allowUnauthenticated) {
-    throw new Error(
-      "Refusing to listen on a non-loopback host without HOOPILOT_API_KEY. Set an API key or pass --allow-unauthenticated.",
-    );
+  if (!isLoopbackHost(host)) {
+    if (!apiKey && !allowUnauthenticated) {
+      throw new Error(
+        "Refusing to listen on a non-loopback host without HOOPILOT_API_KEY. Set an API key or pass --allow-unauthenticated.",
+      );
+    }
+    if (apiKey && isWellKnownDemoApiKey(apiKey)) {
+      throw new Error(
+        "Refusing to listen on a non-loopback host with a well-known demo HOOPILOT_API_KEY. Set a strong, unique API key.",
+      );
+    }
   }
 
   const server = Bun.serve({
@@ -636,12 +651,15 @@ function websocketUnsupportedResponse(): Response {
   return response;
 }
 
+// CORS headers shared by every response. The `access-control-allow-origin` value
+// is intentionally omitted here and set per-request by `finishResponse`, so the
+// proxy only advertises access to origins it actually allows (loopback or
+// HOOPILOT_ALLOWED_ORIGINS) instead of a blanket wildcard.
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-headers":
       "anthropic-beta, anthropic-dangerous-direct-browser-access, anthropic-version, authorization, content-type, x-api-key, x-request-id",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-origin": "*",
     "access-control-expose-headers": "x-request-id",
   };
 }
@@ -655,18 +673,60 @@ function isAuthorized(request: Request, apiKey: string | undefined): boolean {
   return bearer === apiKey || request.headers.get("x-api-key") === apiKey;
 }
 
-function forbiddenBrowserOrigin(request: Request, apiKey: string | undefined): string | undefined {
-  if (apiKey) {
-    return undefined;
-  }
-
-  const origin = request.headers.get("origin")?.trim();
+// Block cross-origin browser requests regardless of whether an API key is set.
+// The proxy holds a GitHub OAuth credential and is meant for local CLI/tool
+// clients, never for arbitrary web pages: a malicious site must not be able to
+// drive it even if it knows (or guesses) the local API key. Loopback origins and
+// any origin in HOOPILOT_ALLOWED_ORIGINS are allowed through to the key check.
+function forbiddenBrowserOrigin(
+  origin: string | undefined,
+  request: Request,
+  allowedOrigins: ReadonlySet<string>,
+): string | undefined {
   if (origin) {
-    return isLoopbackOrigin(origin) ? undefined : origin;
+    return isAllowedOrigin(origin, allowedOrigins) ? undefined : origin;
   }
 
   const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
   return fetchSite === "cross-site" ? "cross-site" : undefined;
+}
+
+// Parse the comma-separated HOOPILOT_ALLOWED_ORIGINS allowlist into a normalized
+// set of exact origins (scheme + host + optional port), lower-cased for matching.
+function parseAllowedOrigins(env: NodeJS.ProcessEnv | undefined): ReadonlySet<string> {
+  const raw = envValue(env?.HOOPILOT_ALLOWED_ORIGINS);
+  if (!raw) {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0),
+  );
+}
+
+function isAllowedOrigin(origin: string, allowedOrigins: ReadonlySet<string>): boolean {
+  return isLoopbackOrigin(origin) || allowedOrigins.has(origin.toLowerCase());
+}
+
+// Resolve the `access-control-allow-origin` value for a response. Allowed browser
+// origins are echoed back (so the page can read the response); a request with no
+// Origin is a non-browser client where the value is inert, so we keep `*`;
+// disallowed origins get no header (they are also blocked with a 403), so a
+// malicious page cannot read even an error body.
+function resolveCorsAllowOrigin(
+  origin: string | undefined,
+  allowedOrigins: ReadonlySet<string>,
+): string | undefined {
+  if (!origin) {
+    return "*";
+  }
+  return isAllowedOrigin(origin, allowedOrigins) ? origin : undefined;
+}
+
+function isWellKnownDemoApiKey(apiKey: string): boolean {
+  return WELL_KNOWN_DEMO_API_KEYS.has(apiKey.trim().toLowerCase());
 }
 
 function isUpstreamAuthStatus(status: number): boolean {
@@ -745,6 +805,7 @@ function finishResponse(
   response: Response,
   options: {
     closeConnection: boolean;
+    corsOrigin: string | undefined;
     logger: HoopilotLogger;
     method: string;
     metrics: MetricsRegistry;
@@ -754,7 +815,12 @@ function finishResponse(
     trackStreamingBody: boolean;
   },
 ): Response {
-  const withRequestId = responseWithRequestId(response, options.requestId, options.closeConnection);
+  const withRequestId = responseWithRequestId(
+    response,
+    options.requestId,
+    options.closeConnection,
+    options.corsOrigin,
+  );
   const stream = isStreamingResponse(withRequestId);
   const status = withRequestId.status;
   // Record metrics and log when the response is truly done. For a streamed body
@@ -782,9 +848,20 @@ function responseWithRequestId(
   response: Response,
   requestId: string,
   closeConnection: boolean,
+  corsOrigin: string | undefined,
 ): Response {
   const headers = new Headers(response.headers);
   headers.set("x-request-id", requestId);
+  if (corsOrigin) {
+    headers.set("access-control-allow-origin", corsOrigin);
+    // A specific (non-wildcard) origin makes the response origin-dependent, so
+    // mark it Vary: Origin to keep shared caches from serving it to others.
+    if (corsOrigin !== "*") {
+      headers.append("vary", "Origin");
+    }
+  } else {
+    headers.delete("access-control-allow-origin");
+  }
   if (closeConnection) {
     headers.set("connection", "close");
   }
