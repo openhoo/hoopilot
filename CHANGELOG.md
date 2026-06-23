@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.8.3 (2026-06-23)
+
+### Bug Fixes
+
+- **release:** keep binary target list parseable (33f53c4)
+
 ## 0.8.2 (2026-06-23)
 
 ### Bug Fixes
