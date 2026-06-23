@@ -1,5 +1,16 @@
 # @openhoo/hoopilot Changelog
 
+## 1.0.0 (2026-06-23)
+
+### Other Changes
+
+- polish README (9a30655)
+
+### Breaking Changes
+
+- **security:** require auth on non-loopback binds and block cross-origin browser access (ce4aafe)
+  - BREAKING: the Docker image now refuses to start without a strong, unique
+
 ## 0.10.0 (2026-06-23)
 
 ### Features
