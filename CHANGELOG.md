@@ -1,5 +1,15 @@
 # @openhoo/hoopilot Changelog
 
+## 0.9.2 (2026-06-23)
+
+### Other Changes
+
+- **release:** split binary upload and image push into separate jobs (d3e90b1)
+
+### Bug Fixes
+
+- **server:** support codex responses compaction (931f17e)
+
 ## 0.9.1 (2026-06-23)
 
 ### Bug Fixes
