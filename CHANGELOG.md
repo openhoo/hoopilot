@@ -1,5 +1,15 @@
 # @openhoo/hoopilot Changelog
 
+## 0.9.3 (2026-06-23)
+
+### Other Changes
+
+- reduce Docker image size (12d5b8f)
+
+### Bug Fixes
+
+- **docker:** smooth container auth flow (23a8b39)
+
 ## 0.9.2 (2026-06-23)
 
 ### Other Changes
