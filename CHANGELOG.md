@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.8.2 (2026-06-23)
+
+### Bug Fixes
+
+- **release:** build Windows x64 binary with baseline runtime (01f9900)
+
 ## 0.8.1 (2026-06-23)
 
 ### Bug Fixes
