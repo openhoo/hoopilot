@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 1.1.0 (2026-06-23)
+
+### Features
+
+- **metrics:** track GitHub REST API rate-limit usage (f835aec)
+
 ## 1.0.0 (2026-06-23)
 
 ### Other Changes
