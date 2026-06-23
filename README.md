@@ -91,6 +91,37 @@ npx @openhoo/hoopilot login
 
 The login command prints a one-time code, opens `https://github.com/login/device` best-effort, verifies that the returned OAuth token can reach the Copilot API, and stores it in Hoopilot's auth file. Re-run `npx @openhoo/hoopilot login` after upgrading Hoopilot if Copilot reports a supported model as unavailable; older stored tokens can have a reduced model set.
 
+Add `--print-key` to print the received OAuth token after verification. Login status stays on stderr, so stdout contains only the token. To append the token to a `.env` file, use one of these copyable examples.
+
+Local CLI, sh:
+
+```sh
+hoopilot login --print-key | sed 's/^/COPILOT_OAUTH_TOKEN=/' >> .env
+```
+
+Local CLI, PowerShell:
+
+```powershell
+hoopilot login --print-key |
+  ForEach-Object { "COPILOT_OAUTH_TOKEN=$_" } |
+  Add-Content -Encoding utf8 .env
+```
+
+Docker, sh:
+
+```sh
+docker run --rm -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login --print-key \
+  | sed 's/^/COPILOT_OAUTH_TOKEN=/' >> .env
+```
+
+Docker, PowerShell:
+
+```powershell
+docker run --rm -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login --print-key |
+  ForEach-Object { "COPILOT_OAUTH_TOKEN=$_" } |
+  Add-Content -Encoding utf8 .env
+```
+
 Then start the proxy:
 
 ```powershell
@@ -280,6 +311,7 @@ Options:
     --api-key-file <path>         Read the local API key from a file instead of argv
     --auth-file <path>            OAuth credential store path
     --copilot-api-base-url <url>  Copilot API base URL override
+    --print-key                   Login: print the received OAuth token to stdout
     --log-level <level>           trace, debug, info, warn, error, fatal, or silent
     --log-format <format>         json or pretty. Default: pretty
     --no-update-check             Do not check GitHub for a newer release

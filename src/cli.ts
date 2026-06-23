@@ -6,7 +6,11 @@ import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
 import { main as codexxMain } from "./codexx";
 import { applyCopilotHeaders, CopilotClient, normalizeCopilotUsage } from "./copilot";
-import { githubCopilotDeviceLogin } from "./github-device";
+import {
+  type GithubCopilotDeviceLoginOptions,
+  type GithubCopilotDeviceLoginResult,
+  githubCopilotDeviceLogin,
+} from "./github-device";
 import { createHoopilotLogger, noopLogger, parseLogFormat, parseLogLevel } from "./logger";
 import { startHoopilotServer } from "./server";
 import type {
@@ -16,6 +20,7 @@ import type {
   FetchLike,
   HoopilotLogger,
   HoopilotServerOptions,
+  Logger,
 } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
 import {
@@ -30,7 +35,17 @@ import { getVersion, IS_STANDALONE_BINARY } from "./version";
 interface ParsedArgs extends HoopilotServerOptions {
   help?: boolean;
   noUpdateCheck?: boolean;
+  printToken?: boolean;
   version?: boolean;
+}
+
+type DeviceLogin = (
+  options: GithubCopilotDeviceLoginOptions,
+) => Promise<GithubCopilotDeviceLoginResult>;
+
+interface RunLoginOptions extends HoopilotServerOptions {
+  deviceLogin?: DeviceLogin;
+  printToken?: boolean;
 }
 
 interface VerifyCopilotOAuthTokenOptions {
@@ -64,7 +79,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<void> {
     if (await printMetaOption(args)) {
       return;
     }
-    args.logger = commandLogger(args, "login");
+    args.logger = commandLogger(args, "login", args.printToken ? process.stderr : undefined);
     await runLogin(args);
     return;
   }
@@ -157,6 +172,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       args.noUpdateCheck = true;
       continue;
     }
+    if (arg === "--print-key" || arg === "--print-token") {
+      args.printToken = true;
+      continue;
+    }
 
     if (!arg.startsWith("-")) {
       throw new Error(`Unknown argument: ${arg}.`);
@@ -236,17 +255,19 @@ function readApiKeyFile(path: string): string {
   return value;
 }
 
-async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
+export async function runLogin(options: RunLoginOptions = {}): Promise<void> {
   const logger = options.logger?.child({ component: "auth" }) ?? noopLogger;
+  const status = loginStatusLogger(Boolean(options.printToken));
   logger.debug({ event: "auth.login.started" }, "starting github copilot browser login");
-  console.log("Starting GitHub Copilot browser login...");
-  const login = await githubCopilotDeviceLogin({
+  status.info("Starting GitHub Copilot browser login...");
+  const deviceLogin = options.deviceLogin ?? githubCopilotDeviceLogin;
+  const login = await deviceLogin({
     env: options.env,
-    logger: console,
+    logger: status,
     openBrowser: openBrowserBestEffort,
   });
 
-  console.log("Checking GitHub Copilot access...");
+  status.info("Checking GitHub Copilot access...");
   const access = await verifyCopilotOAuthToken(login.token, options);
   logger.debug(
     { apiBaseUrl: access.apiBaseUrl, event: "auth.login.verified" },
@@ -263,8 +284,11 @@ async function runLogin(options: HoopilotServerOptions = {}): Promise<void> {
     path,
   );
   logger.debug({ authStorePath: path, event: "auth.login.stored" }, "copilot credential stored");
-  console.log(`Copilot OAuth credential stored at ${path}`);
-  console.log("Copilot authentication ready.");
+  status.info(`Copilot OAuth credential stored at ${path}`);
+  status.info("Copilot authentication ready.");
+  if (options.printToken) {
+    console.log(login.token);
+  }
 }
 
 export async function runModels(options: HoopilotServerOptions = {}): Promise<string[]> {
@@ -480,12 +504,32 @@ function withRuntimeEnv(args: ParsedArgs): ParsedArgs {
   return { ...args, env: process.env };
 }
 
-function commandLogger(args: ParsedArgs, command: string): HoopilotLogger {
+function commandLogger(
+  args: ParsedArgs,
+  command: string,
+  stream?: { write(message: string): unknown },
+): HoopilotLogger {
   return createHoopilotLogger({
     env: args.env,
     format: args.logFormat,
     level: args.logLevel,
+    stream,
   }).child({ command, component: "cli" });
+}
+
+function loginStatusLogger(writeSecretsToStdout: boolean): Logger {
+  if (writeSecretsToStdout) {
+    return {
+      error: (message) => console.error(message),
+      info: (message) => console.error(message),
+      warn: (message) => console.error(message),
+    };
+  }
+  return {
+    error: (message) => console.error(message),
+    info: (message) => console.log(message),
+    warn: (message) => console.warn(message),
+  };
 }
 
 function helpText(version: string): string {
@@ -521,6 +565,7 @@ Options:
       --api-key-file <path>         Read the local API key from a file instead of argv
       --auth-file <path>            OAuth credential store path
       --copilot-api-base-url <url>  Copilot API base URL override
+      --print-key                   Login: print the received OAuth token to stdout
       --log-level <level>           trace, debug, info, warn, error, fatal, or silent
       --log-format <format>         json or pretty. Default: pretty
       --stream-mode <mode>          auto, live, or buffer. Auto buffers Windows standalone streams.

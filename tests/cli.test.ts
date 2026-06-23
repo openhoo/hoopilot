@@ -3,11 +3,12 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeStoredCopilotAuth } from "../src/auth-store";
+import { readStoredCopilotAuth, writeStoredCopilotAuth } from "../src/auth-store";
 import {
   main,
   openBrowserBestEffort,
   parseArgs,
+  runLogin,
   runModels,
   runUsage,
   verifyCopilotOAuthToken,
@@ -64,6 +65,11 @@ describe("parseArgs", () => {
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
+  });
+
+  it("accepts the login token printing flag", () => {
+    expect(parseArgs(["--print-key"])).toMatchObject({ printToken: true });
+    expect(parseArgs(["--print-token"])).toMatchObject({ printToken: true });
   });
 
   it("rejects removed token and auth mode options", () => {
@@ -135,6 +141,60 @@ describe("main", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^\d+\.\d+\.\d+/);
     expect(lines[1]).toBe(lines[0]);
+  });
+});
+
+describe("runLogin", () => {
+  it("prints only the received OAuth token to stdout when requested", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-login-test-"));
+    try {
+      const authPath = join(dir, "auth.json");
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const requests: Request[] = [];
+      const originalLog = console.log;
+      const originalError = console.error;
+      console.log = (...values: unknown[]) => {
+        stdout.push(values.join(" "));
+      };
+      console.error = (...values: unknown[]) => {
+        stderr.push(values.join(" "));
+      };
+      try {
+        await runLogin({
+          authStorePath: authPath,
+          deviceLogin: async (options) => {
+            options.logger?.info("First copy your one-time code: ABCD-1234");
+            return { domain: "github.com", token: "oauth-token" };
+          },
+          fetch: async (input, init) => {
+            requests.push(new Request(input, init));
+            return Response.json({ data: [{ id: "gpt-5.5" }] });
+          },
+          printToken: true,
+        });
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+      }
+
+      expect(stdout).toEqual(["oauth-token"]);
+      expect(stderr).toContain("Starting GitHub Copilot browser login...");
+      expect(stderr).toContain("First copy your one-time code: ABCD-1234");
+      expect(stderr).toContain("Checking GitHub Copilot access...");
+      expect(stderr).toContain(`Copilot OAuth credential stored at ${authPath}`);
+      expect(stderr).toContain("Copilot authentication ready.");
+      expect(readStoredCopilotAuth(authPath)).toMatchObject({
+        apiBaseUrl: "https://api.githubcopilot.com",
+        githubDomain: "github.com",
+        source: "github-device-oauth",
+        token: "oauth-token",
+      });
+      expect(requests[0]!.url).toBe("https://api.githubcopilot.com/models");
+      expect(requests[0]!.headers.get("authorization")).toBe("Bearer oauth-token");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });
 
