@@ -19,7 +19,9 @@ linux-x64-musl:bun-linux-x64-musl
 linux-arm64-musl:bun-linux-arm64-musl
 darwin-x64:bun-darwin-x64
 darwin-arm64:bun-darwin-arm64
-windows-x64:bun-windows-x64
+# Keep the public asset name "windows-x64", but embed Bun's baseline x64
+# runtime so older CPUs and VMs without AVX2 do not crash at startup.
+windows-x64:bun-windows-x64-baseline
 windows-arm64:bun-windows-arm64
 "
 
