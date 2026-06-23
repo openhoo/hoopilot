@@ -1,34 +1,82 @@
-# hoopilot
+# Hoopilot
 
 [![npm version](https://img.shields.io/npm/v/%40openhoo%2Fhoopilot?label=npm)](https://www.npmjs.com/package/@openhoo/hoopilot)
 [![CI](https://github.com/openhoo/hoopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/openhoo/hoopilot/actions/workflows/ci.yml)
 
-OpenAI- and Anthropic-compatible local proxy for GitHub Copilot accounts. It runs on Bun and exposes OpenAI-style `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, and `/v1/models` routes plus Claude Code-compatible `/v1/messages` and `/v1/messages/count_tokens` routes.
+Hoopilot is a local OpenAI- and Anthropic-compatible proxy for GitHub Copilot accounts. It runs on Bun and exposes OpenAI-style `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, and `/v1/models` routes, plus Claude Code-compatible `/v1/messages` and `/v1/messages/count_tokens` routes.
 
-This project uses GitHub Copilot's service endpoints and is not an official GitHub product. The upstream API can change without notice. Use it only with accounts and usage patterns you are allowed to use.
+This project uses GitHub Copilot service endpoints and is not an official GitHub product. Upstream behavior can change without notice. Use Hoopilot only with accounts and usage patterns you are allowed to use.
+
+## Highlights
+
+- Browser-based GitHub Copilot OAuth login with a local credential store.
+- OpenAI-compatible Chat Completions, Responses, legacy Completions, and model-list routes.
+- Anthropic Messages compatibility for Claude Code and other Anthropic-style clients.
+- Bundled `codexx` launcher that runs Codex against a local Hoopilot server with the right Responses API provider settings.
+- Local API-key gate, loopback-safe defaults, structured logs, Prometheus metrics, and Copilot quota reporting.
+- npm package, standalone binaries, Docker image, and self-update support for release binaries.
+
+## Quick start
+
+Sign in once, then start the proxy:
+
+```sh
+npx @openhoo/hoopilot login
+HOOPILOT_API_KEY=local-key npx @openhoo/hoopilot
+```
+
+PowerShell:
+
+```powershell
+npx @openhoo/hoopilot login
+$env:HOOPILOT_API_KEY = "local-key"
+npx @openhoo/hoopilot
+```
+
+Point OpenAI-compatible clients at the local server:
+
+```sh
+export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
+export OPENAI_API_KEY=local-key
+```
+
+PowerShell:
+
+```powershell
+$env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
+$env:OPENAI_API_KEY = "local-key"
+```
+
+Run Codex through Hoopilot after the server is running:
+
+```sh
+HOOPILOT_API_KEY=local-key npx --package @openhoo/hoopilot codexx
+```
 
 ## Install
 
 ### npm
 
-```powershell
+Run without installing:
+
+```sh
 npx @openhoo/hoopilot
 ```
 
-Or install it globally:
+Or install the package globally:
 
-```powershell
+```sh
 npm install -g @openhoo/hoopilot
 bun add -g @openhoo/hoopilot
 ```
 
-### Standalone Binary
+### Standalone binary
 
-When the npm registry is unreachable but GitHub is reachable, install a prebuilt self-contained binary from the latest GitHub release. No Node.js or Bun runtime is needed to run it.
+When npm is unavailable but GitHub releases are reachable, install a prebuilt self-contained binary. Node.js and Bun are not required to run the binary.
 
-Linux / macOS from PowerShell:
+Linux/macOS:
 
-```powershell
+```sh
 curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh
 ```
 
@@ -38,9 +86,9 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.ps1 | iex
 ```
 
-The installer detects your OS, CPU architecture, and libc, downloads the matching binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin` on Linux/macOS or `%LOCALAPPDATA%\Programs\hoopilot` on Windows. Override the location with `HOOPILOT_INSTALL_DIR`, or pin a version:
+The installer detects your OS, CPU architecture, and libc, downloads the matching binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin` on Linux/macOS or `%LOCALAPPDATA%\Programs\hoopilot` on Windows. Override the install directory with `HOOPILOT_INSTALL_DIR`, or pin a version:
 
-```powershell
+```sh
 curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/install.sh | sh -s -- --version <version> --dir ~/bin
 ```
 
@@ -64,10 +112,14 @@ docker run -d --name hoopilot --restart unless-stopped \
   -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
 ```
 
-Tags follow the release version (e.g. `ghcr.io/openhoo/hoopilot:0.8`, `:0.8.3`) plus `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` (override with `HOOPILOT_AUTH_FILE`). The Docker image allows unauthenticated local clients by default; set `HOOPILOT_API_KEY` if you publish the port beyond localhost. A `docker-compose.yml` is provided in the repository:
+Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:0.10`, `:0.10.0`, and `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
+
+The Docker image allows unauthenticated local clients by default so the compose file works out of the box. Set `HOOPILOT_API_KEY` before publishing the port beyond localhost.
+
+A `docker-compose.yml` is provided:
 
 ```sh
-docker compose run --rm hoopilot login   # one-time GitHub OAuth
+docker compose run --rm hoopilot login
 docker compose up -d
 ```
 
@@ -75,31 +127,102 @@ docker compose up -d
 
 Standalone binaries update themselves in place from the latest GitHub release:
 
-```powershell
+```sh
 hoopilot update
 ```
 
 npm installs report when a newer version is available and print the right command. Hoopilot checks GitHub at most once a day in the background. Disable the check with `--no-update-check`, `HOOPILOT_NO_UPDATE_CHECK`, or `NO_UPDATE_NOTIFIER`.
 
-## Run
+## Running the proxy
 
-First sign in with GitHub Copilot OAuth in your browser:
+Login uses GitHub's browser/device flow, verifies that the returned OAuth token can reach the Copilot API, and stores it locally:
 
-```powershell
-npx @openhoo/hoopilot login
+```sh
+hoopilot login
 ```
 
-The login command prints a one-time code, opens `https://github.com/login/device` best-effort, verifies that the returned OAuth token can reach the Copilot API, and stores it in Hoopilot's auth file. Re-run `npx @openhoo/hoopilot login` after upgrading Hoopilot if Copilot reports a supported model as unavailable; older stored tokens can have a reduced model set.
+Default credential paths:
 
-Add `--print-key` to print the received OAuth token after verification. Login status stays on stderr, so stdout contains only the token. To append the token to a `.env` file, use one of these copyable examples.
+- Linux/macOS: `$HOME/.config/hoopilot/auth.json`
+- Windows: `%APPDATA%\hoopilot\auth.json`
 
-Local CLI, sh:
+Override the path with `HOOPILOT_AUTH_FILE` or `--auth-file`.
+
+Start the server:
+
+```sh
+hoopilot --port 4141
+```
+
+By default Hoopilot listens on `127.0.0.1:4141`. If `HOOPILOT_API_KEY` is unset, local requests are accepted without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` or `HOOPILOT_ALLOW_UNAUTHENTICATED=1` is set.
+
+When an API key is configured, clients may send it as either `Authorization: Bearer <key>` or `x-api-key: <key>`.
+
+## Client setup
+
+### OpenAI-compatible clients
+
+```sh
+export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
+export OPENAI_API_KEY=local-key
+```
+
+Use any model returned by:
+
+```sh
+hoopilot models
+```
+
+### Claude Code and Anthropic-style clients
+
+```sh
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4141
+export ANTHROPIC_AUTH_TOKEN=local-key
+claude
+```
+
+Hoopilot accepts the local key as `x-api-key` too, so `ANTHROPIC_API_KEY` also works for clients that send Anthropic's standard API-key header.
+
+### Codex
+
+Use the bundled `codexx` command after Hoopilot is running:
+
+```sh
+HOOPILOT_API_KEY=local-key codexx
+```
+
+Without a global install:
+
+```sh
+HOOPILOT_API_KEY=local-key npx --package @openhoo/hoopilot codexx
+```
+
+`codexx` does not start Hoopilot and does not alter your shell environment. It starts `codex` with a temporary `hoopilot` model provider pointed at `http://127.0.0.1:4141/v1`, uses the Responses API wire format, disables Responses WebSockets for that provider, maps `HOOPILOT_API_KEY` to `OPENAI_API_KEY` for the child process, passes `--disable network_proxy`, and removes standard proxy variables from the spawned Codex process.
+
+`codexx` defaults to `gpt-5.5` with `model_reasoning_effort="xhigh"`. Before starting Codex, it checks `/v1/models` and reports if the logged-in Copilot account does not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models, or log in with a Copilot account that has access to the default model.
+
+Codex compaction posts to `/v1/responses/compact` for OpenAI- and Azure-named providers. Hoopilot handles that route with a unary Copilot Responses request and returns the `{ "output": [...] }` summary Codex expects, so compaction works through either `codexx` or a direct OpenAI-compatible base URL override.
+
+## Authentication
+
+Hoopilot supports one upstream credential flow: GitHub Copilot OAuth browser login.
+
+```sh
+hoopilot login
+hoopilot
+```
+
+Direct bearer tokens, GitHub CLI token fallback, classic GitHub PATs, and fine-grained GitHub PATs are not supported.
+
+Re-run `hoopilot login` after upgrading Hoopilot if Copilot reports a supported model as unavailable. Older stored tokens can have a reduced model set.
+
+To print the verified OAuth token for another local tool, use `--print-key`. Login status goes to stderr, so stdout contains only the token.
 
 ```sh
 hoopilot login --print-key | sed 's/^/COPILOT_OAUTH_TOKEN=/' >> .env
 ```
 
-Local CLI, PowerShell:
+PowerShell:
 
 ```powershell
 hoopilot login --print-key |
@@ -107,188 +230,119 @@ hoopilot login --print-key |
   Add-Content -Encoding utf8 .env
 ```
 
-Docker, sh:
+Docker:
 
 ```sh
 docker run --rm -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login --print-key \
   | sed 's/^/COPILOT_OAUTH_TOKEN=/' >> .env
 ```
 
-Docker, PowerShell:
-
-```powershell
-docker run --rm -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login --print-key |
-  ForEach-Object { "COPILOT_OAUTH_TOKEN=$_" } |
-  Add-Content -Encoding utf8 .env
-```
-
-Then start the proxy:
-
-```powershell
-npx @openhoo/hoopilot
-```
-
-By default Hoopilot listens on `127.0.0.1:4141` and reads the stored OAuth credential from:
-
-- Linux/macOS: `$HOME/.config/hoopilot/auth.json`
-- Windows: `$env:APPDATA\hoopilot\auth.json`
-
-Override the path with `HOOPILOT_AUTH_FILE` or `--auth-file`.
-
-For a local API key:
-
-```powershell
-$env:HOOPILOT_API_KEY = "local-key"
-npx @openhoo/hoopilot --port 4141
-```
-
-Point OpenAI-compatible clients at:
-
-```powershell
-$env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
-$env:OPENAI_API_KEY = "local-key"
-```
-
-Point Claude Code at the same server through its Anthropic base URL:
-
-```powershell
-$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4141"
-$env:ANTHROPIC_AUTH_TOKEN = "local-key"
-claude
-```
-
-Hoopilot accepts the local key as either `Authorization: Bearer <key>` or
-`x-api-key: <key>`, so `ANTHROPIC_API_KEY` also works for clients that send
-Anthropic's `x-api-key` header.
-
-Use with Codex CLI after Hoopilot is running, via the bundled `codexx` command. It runs Codex against the local server with the right model provider — selecting `gpt-5.5` over Copilot's Responses API, which a plain `openai_base_url` override does not configure (see the note below):
-
-```powershell
-$env:HOOPILOT_API_KEY = "local-key"
-codexx
-```
-
-Without a global install, run it through npm:
-
-```powershell
-$env:HOOPILOT_API_KEY = "local-key"
-npx --package @openhoo/hoopilot codexx
-```
-
-`codexx` does not start Hoopilot and does not change your shell environment. It runs
-`codex` with a temporary `hoopilot` model provider pointed at
-`http://127.0.0.1:4141/v1`, disables Codex Responses WebSockets for that provider,
-maps `HOOPILOT_API_KEY` to `OPENAI_API_KEY` for that child process, passes
-`--disable network_proxy` to Codex, and removes standard proxy variables from the
-spawned Codex process so Codex talks directly to the local server. Override the local
-URL with `CODEXX_BASE_URL`, the local key with `CODEXX_API_KEY`, or the Codex
-executable with `CODEXX_CODEX_BIN`, the model with `CODEXX_MODEL`, or the reasoning
-effort with `CODEXX_MODEL_REASONING_EFFORT`.
-
-`codexx` defaults to `gpt-5.5` with `model_reasoning_effort="xhigh"`. Codex sends
-those requests through its Responses API provider, and Hoopilot forwards them to
-Copilot's Responses endpoint because `gpt-5.5` is not available through Copilot's
-chat-completions endpoint. Before starting Codex, `codexx` checks
-`http://127.0.0.1:4141/v1/models` and reports if the logged-in Copilot account does
-not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models,
-or log in with a Copilot account that has `gpt-5.5`.
-
-When Codex compacts a long session it POSTs to `/v1/responses/compact` — a server-side
-endpoint it expects from `OpenAI`- and Azure-named providers and for which it has no
-local fallback, so an unhandled route would abort compaction. Hoopilot handles it by
-running the supplied conversation through Copilot's Responses endpoint as a unary
-request and returning the resulting `{ "output": [...] }` summary, so compaction works
-whether Codex points at Hoopilot through `codexx` or through a plain `OPENAI_BASE_URL`
-override of the built-in `openai` provider.
-
-If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
-
 ## Logging
 
-Hoopilot uses Pino for structured logs. Server startup, request completion, upstream Copilot failures, model-list fallback, auth failures, and update-check diagnostics are logged with stable event names and request IDs. Logs never include request bodies, prompt text, completions, stream chunks, OAuth tokens, API keys, authorization headers, cookies, or auth-file contents.
+Hoopilot uses Pino for structured logs. Server startup, request completion, upstream Copilot failures, model-list fallback, auth failures, and update-check diagnostics are logged with stable event names and request IDs.
+
+Logs never include request bodies, prompt text, completions, stream chunks, OAuth tokens, API keys, authorization headers, cookies, or auth-file contents.
 
 Console logs default to pretty output at `info` level:
 
-```powershell
-npx @openhoo/hoopilot --log-level info --log-format pretty
+```sh
+hoopilot --log-level info --log-format pretty
 ```
 
-For machine-readable newline-delimited JSON:
+For newline-delimited JSON:
 
-```powershell
-npx @openhoo/hoopilot --log-level info --log-format json
+```sh
+hoopilot --log-level info --log-format json
 ```
-
-Equivalent environment variables:
-
-- `HOOPILOT_LOG_LEVEL`: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`. Default: `info`.
-- `HOOPILOT_LOG_FORMAT`: `json` or `pretty`. Default: `pretty`.
 
 Incoming `x-request-id` headers are preserved on responses. If a request has no ID, Hoopilot generates one and returns it as `x-request-id`.
 
 ## Metrics and usage
 
-Hoopilot tracks token usage, request counts, and latency in memory while the server runs, and can report your GitHub Copilot account quota (premium-request "credit" usage).
+Hoopilot tracks token usage, request counts, and latency in memory while the server runs. It can also report your GitHub Copilot account quota and premium-request usage.
 
-- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters (`hoopilot_requests_total`), upstream call counters (`hoopilot_upstream_requests_total`), token counters by model and type (`hoopilot_tokens_total{model,type}`), a request-duration histogram (`hoopilot_request_duration_seconds`), an in-flight gauge, and—once `/v1/usage` has been fetched at least once—Copilot quota gauges (`hoopilot_copilot_quota_remaining{category}`, `_entitlement`, `_used`, `_percent_remaining`, `_overage_count`, `_overage_entitlement`, `_unlimited`, `_overage_permitted`, `_has_quota`, `_token_based_billing`, and category reset/snapshot timestamps). Counters reset to zero on restart, which Prometheus handles natively.
-- `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub (cached for 60 seconds). If the quota cannot be read, `copilot` is `null` and `copilot_error` explains why, but the proxy metrics are still returned.
+- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters, upstream call counters, token counters by model and type, a request-duration histogram, an in-flight gauge, and Copilot quota gauges after `/v1/usage` has been fetched at least once. Counters reset to zero on restart, which Prometheus handles natively.
+- `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub and cached for 60 seconds. If quota cannot be read, `copilot` is `null` and `copilot_error` explains why.
 - `hoopilot usage` prints your Copilot plan and quota from the command line.
 
-Token usage is read from the upstream `usage` object. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot never injects it, so streamed chat requests without that flag contribute request and latency metrics but not token counts. The Responses API always reports usage, so streamed Responses requests are fully accounted.
+Token usage is read from the upstream `usage` object. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot does not inject that flag. Responses API streaming always reports usage, so streamed Responses requests are fully accounted.
 
 `/metrics` and `/v1/usage` are subject to the same `HOOPILOT_API_KEY` gate as the other routes.
 
-## Authentication
+## Troubleshooting
 
-Hoopilot supports one credential flow: GitHub Copilot OAuth browser login.
-
-```powershell
-npx @openhoo/hoopilot login
-npx @openhoo/hoopilot
-```
-
-Direct bearer tokens, GitHub CLI token fallback, classic GitHub PATs, and fine-grained GitHub PATs are not supported.
-
-Supported authentication-related settings:
-
-- `HOOPILOT_AUTH_FILE`: OAuth credential store path.
-- `HOOPILOT_GITHUB_CLIENT_ID`: GitHub OAuth app client ID override. The default uses the same GitHub Copilot OAuth app as opencode's Copilot provider.
-- `HOOPILOT_GITHUB_DOMAIN`: GitHub domain override. Default: `github.com`.
-- `COPILOT_API_BASE_URL`: upstream Copilot API base URL override. Default: `https://api.githubcopilot.com`.
-- `HOOPILOT_GITHUB_API_BASE_URL`: GitHub REST API base URL used for the Copilot quota lookup. Default: `https://api.github.com`.
-- `HOOPILOT_ALLOW_UNSAFE_UPSTREAM=1`: allow sending the stored OAuth token to nonstandard HTTPS Copilot/GitHub API hosts. Use only for trusted test or enterprise endpoints.
-
-## Codex Auth Errors
+### Codex auth errors
 
 Hoopilot does not return raw `403` responses to Codex for authentication or Copilot-entitlement failures. Local Hoopilot API-key problems return `401 invalid_api_key`; OAuth credential and upstream Copilot auth failures return `401 copilot_auth_error`.
 
-In PowerShell, verify the browser login and local proxy before retrying Codex:
+Verify browser login and the local proxy before retrying Codex:
 
-```powershell
-npx @openhoo/hoopilot login
-$env:HOOPILOT_API_KEY = "local-key"
-npx @openhoo/hoopilot --port 4141
+```sh
+hoopilot login
+HOOPILOT_API_KEY=local-key hoopilot --port 4141
 ```
 
-Then, in another PowerShell session:
+Then, in another shell:
 
-```powershell
-$env:OPENAI_API_KEY = "local-key"
-Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:OPENAI_API_KEY" } `
-  http://127.0.0.1:4141/v1/models
-codexx
+```sh
+curl -H "Authorization: Bearer local-key" http://127.0.0.1:4141/v1/models
+HOOPILOT_API_KEY=local-key codexx
 ```
 
-If that returns `401 copilot_auth_error`, rerun `npx @openhoo/hoopilot login` and confirm the GitHub account has active Copilot access.
+If `/v1/models` returns `401 copilot_auth_error`, rerun `hoopilot login` and confirm that the GitHub account has active Copilot access.
 
-## CLI
+## Configuration
 
-```powershell
+Server and local-client settings:
+
+| Setting | Description |
+| --- | --- |
+| `HOST` / `--host` | Host to listen on. Default: `127.0.0.1` for local runs; Docker sets `0.0.0.0`. |
+| `PORT` / `--port` | Port to listen on. Default: `4141`. |
+| `HOOPILOT_API_KEY` / `--api-key` | Require clients to send `Authorization: Bearer <key>` or `x-api-key: <key>`. |
+| `--api-key-file` | Read the local API key from a file instead of argv. |
+| `HOOPILOT_ALLOW_UNAUTHENTICATED` / `--allow-unauthenticated` | Allow non-loopback binds without a local API key. |
+| `HOOPILOT_STREAM_MODE` / `--stream-mode` | `auto`, `live`, or `buffer`. `auto` buffers streams for Windows standalone binaries. |
+
+Copilot and GitHub settings:
+
+| Setting | Description |
+| --- | --- |
+| `HOOPILOT_AUTH_FILE` / `--auth-file` | OAuth credential store path. |
+| `HOOPILOT_GITHUB_CLIENT_ID` | GitHub OAuth app client ID override. |
+| `HOOPILOT_GITHUB_DOMAIN` | GitHub domain override. Default: `github.com`. |
+| `COPILOT_API_BASE_URL` / `--copilot-api-base-url` | Upstream Copilot API base URL. Default: `https://api.githubcopilot.com`. |
+| `HOOPILOT_GITHUB_API_BASE_URL` | GitHub REST API base URL used for quota lookup. Default: `https://api.github.com`. |
+| `HOOPILOT_ALLOW_UNSAFE_UPSTREAM=1` | Allow sending the stored OAuth token to nonstandard HTTPS Copilot/GitHub API hosts. Use only for trusted test or enterprise endpoints. |
+
+Logging and update settings:
+
+| Setting | Description |
+| --- | --- |
+| `HOOPILOT_LOG_LEVEL` / `--log-level` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`. Default: `info`. |
+| `HOOPILOT_LOG_FORMAT` / `--log-format` | `pretty` or `json`. Default: `pretty`. |
+| `HOOPILOT_NO_UPDATE_CHECK` / `--no-update-check` | Disable background update checks. `NO_UPDATE_NOTIFIER` is also honored. |
+
+`codexx` settings:
+
+| Setting | Description |
+| --- | --- |
+| `CODEXX_BASE_URL` | OpenAI-compatible Hoopilot base URL. Default: `http://127.0.0.1:4141/v1`. |
+| `CODEXX_API_KEY` | API key sent to Hoopilot. Falls back to `HOOPILOT_API_KEY`, then `local-key`. |
+| `CODEXX_CODEX_BIN` | Codex executable to run. Default: `codex`. |
+| `CODEXX_MODEL` | Codex model to use. Default: `gpt-5.5`. |
+| `CODEXX_MODEL_REASONING_EFFORT` | Codex reasoning effort. Default: `xhigh`. |
+| `CODEXX_SKIP_MODEL_PREFLIGHT=1` | Skip the `/v1/models` availability check before starting Codex. |
+
+## CLI reference
+
+```txt
 hoopilot [serve] [options]
 hoopilot codexx [codex options] [prompt]
 hoopilot login [options]
 hoopilot models [options]
 hoopilot usage [options]
+hoopilot update
 ```
 
 Commands:
@@ -314,34 +368,38 @@ Options:
     --print-key                   Login: print the received OAuth token to stdout
     --log-level <level>           trace, debug, info, warn, error, fatal, or silent
     --log-format <format>         json or pretty. Default: pretty
+    --stream-mode <mode>          auto, live, or buffer. Auto buffers Windows standalone streams.
     --no-update-check             Do not check GitHub for a newer release
     --allow-unauthenticated       Allow non-loopback bind without --api-key
+-h, --help                        Show help
+-v, --version                     Show version
 ```
 
 ## Endpoints
 
-- `GET /healthz`
+- `GET /` and `GET /healthz`
 - `GET /metrics`
 - `GET /v1/models`
 - `GET /v1/usage`
-- `POST /v1/messages`
-- `POST /v1/messages/count_tokens`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+- `POST /v1/responses/compact`
 - `POST /v1/completions`
+- `POST /v1/messages`
+- `POST /v1/messages/count_tokens`
 
-`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/messages` translates Anthropic Messages requests and responses to Copilot's Responses endpoint for Claude Code and other Anthropic-compatible clients. `/v1/messages/count_tokens` returns a local token estimate for Claude Code preflights because Copilot does not expose Anthropic's count-tokens route. `/v1/completions` translates legacy completion requests and responses to the closest chat completions equivalent. `GET /metrics` and `GET /v1/usage` report proxy metrics and Copilot quota (see [Metrics and usage](#metrics-and-usage)).
+`/v1/chat/completions` and `/v1/responses` are proxied to the matching Copilot endpoints as directly as possible. `/v1/messages` translates Anthropic Messages requests and responses to Copilot's Responses endpoint. `/v1/messages/count_tokens` returns a local token estimate for Claude Code preflights because Copilot does not expose Anthropic's count-tokens route. `/v1/completions` translates legacy completion requests and responses to the closest chat-completions equivalent. `GET /v1/responses` returns an explicit unsupported-WebSocket response; `codexx` configures Codex to use HTTP Responses instead.
 
 ## Development
 
-```powershell
+```sh
 bun install
 bun run check
 ```
 
 Useful scripts:
 
-```powershell
+```sh
 bun run test
 bun run test:coverage
 bun run typecheck
@@ -351,7 +409,11 @@ bun run biome:fix
 
 ## Release
 
-Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, publishes the package through npm trusted publishing, then cross-compiles standalone binaries for every supported platform (`scripts/build-binaries.sh`) and attaches them plus a `SHA256SUMS` manifest to the GitHub release. Build all binaries locally with `bun run build:binaries`.
+Commits merged to `main` are evaluated by hooversion after CI passes. When a release is produced, the release workflow creates the release commit, tag, and GitHub release automatically, publishes the package through npm trusted publishing, then cross-compiles standalone binaries for every supported platform with `scripts/build-binaries.sh` and attaches them plus a `SHA256SUMS` manifest to the GitHub release. Build all binaries locally with:
+
+```sh
+bun run build:binaries
+```
 
 Configure npm trusted publishing for `@openhoo/hoopilot` on npmjs.com before relying on automatic publication. The workflow uses GitHub Actions OIDC with `npm publish --access public --provenance`.
 
