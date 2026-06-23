@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.9.0 (2026-06-23)
+
+### Features
+
+- **docker:** run hoopilot as a service and publish image to GHCR (b2990a2)
+
 ## 0.8.4 (2026-06-23)
 
 ### Bug Fixes
