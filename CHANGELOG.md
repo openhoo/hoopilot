@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.8.1 (2026-06-23)
+
+### Bug Fixes
+
+- **release:** build standalone binaries after npm build (55e7d69)
+
 ## 0.8.0 (2026-06-17)
 
 ### Bug Fixes
