@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.8.4 (2026-06-23)
+
+### Bug Fixes
+
+- **server:** buffer Windows standalone streams (45b3d04)
+
 ## 0.8.3 (2026-06-23)
 
 ### Bug Fixes
