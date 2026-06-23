@@ -62,10 +62,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-command: bun install --frozen-lockfile
 
-      - name: Build standalone binaries
-        if: steps.current.outputs.current == 'true' && steps.release.outputs.published == 'true'
-        run: bash scripts/build-binaries.sh "${{ steps.release.outputs.version }}"
-
       - name: Set up Node for npm trusted publishing
         if: steps.current.outputs.current == 'true' && steps.release.outputs.published == 'true'
         uses: actions/setup-node@v6
@@ -93,6 +89,13 @@ jobs:
       - name: Publish package to npm
         if: steps.current.outputs.current == 'true' && steps.release.outputs.published == 'true' && steps.package.outputs.exists != 'true'
         run: npm publish --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
+
+      # Must run AFTER "Build package for npm": that step runs `tsup --clean`,
+      # which wipes the whole dist/ directory (including dist/bin). Building the
+      # standalone binaries last keeps them around for the upload below.
+      - name: Build standalone binaries
+        if: steps.current.outputs.current == 'true' && steps.release.outputs.published == 'true'
+        run: bash scripts/build-binaries.sh "${{ steps.release.outputs.version }}"
 
       - name: Attach binaries to the GitHub release
         if: steps.current.outputs.current == 'true' && steps.release.outputs.published == 'true'
