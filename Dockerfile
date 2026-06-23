@@ -2,7 +2,7 @@
 
 # hoopilot — OpenAI/Anthropic-compatible proxy for GitHub Copilot accounts.
 # Multi-stage build on Bun: compile the TypeScript bundle once, then ship a
-# slim runtime image with only the production dependencies.
+# small runtime image with only the production dependencies.
 #
 # Pinned to the same Bun version as package.json "packageManager".
 ARG BUN_VERSION=1.3.14
@@ -28,7 +28,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 # ---- Stage 3: runtime ------------------------------------------------------
-FROM oven/bun:${BUN_VERSION}-slim AS runtime
+FROM oven/bun:${BUN_VERSION}-alpine AS runtime
 
 # OCI metadata. org.opencontainers.image.source links the GHCR package to this
 # repository (the release workflow also injects these via docker/metadata-action).
