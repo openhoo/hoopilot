@@ -162,6 +162,14 @@ chat-completions endpoint. Before starting Codex, `codexx` checks
 not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models,
 or log in with a Copilot account that has `gpt-5.5`.
 
+When Codex compacts a long session it POSTs to `/v1/responses/compact` — a server-side
+endpoint it expects from `OpenAI`- and Azure-named providers and for which it has no
+local fallback, so an unhandled route would abort compaction. Hoopilot handles it by
+running the supplied conversation through Copilot's Responses endpoint as a unary
+request and returning the resulting `{ "output": [...] }` summary, so compaction works
+whether Codex points at Hoopilot through `codexx` or through a plain `OPENAI_BASE_URL`
+override of the built-in `openai` provider.
+
 If no `HOOPILOT_API_KEY` is configured, Hoopilot accepts local requests without client authentication. Binding to a non-loopback host requires `HOOPILOT_API_KEY` unless `--allow-unauthenticated` is set.
 
 ## Logging

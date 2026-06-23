@@ -40,6 +40,7 @@ export {
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  responsesCompactionResult,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
 } from "./openai";

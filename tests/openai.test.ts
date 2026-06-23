@@ -8,6 +8,7 @@ import {
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  responsesCompactionResult,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
 } from "../src/openai";
@@ -236,6 +237,71 @@ describe("chatCompletionToResponse", () => {
       output_tokens_details: { reasoning_tokens: 0 },
       total_tokens: 6,
     });
+  });
+});
+
+describe("responsesCompactionResult", () => {
+  it("passes a unary Responses output array through verbatim", () => {
+    const output = [
+      { content: [{ text: "reasoning", type: "summary_text" }], type: "reasoning" },
+      {
+        content: [{ annotations: [], text: "summary", type: "output_text" }],
+        role: "assistant",
+        type: "message",
+      },
+    ];
+    const result = responsesCompactionResult(JSON.stringify({ object: "response", output }), false);
+    expect(result).toEqual({ output });
+  });
+
+  it("synthesizes an assistant message from output_text when output is absent", () => {
+    const result = responsesCompactionResult(
+      JSON.stringify({ object: "response", output: [], output_text: "condensed" }),
+      false,
+    );
+    expect(result.output).toEqual([
+      expect.objectContaining({
+        content: [expect.objectContaining({ text: "condensed", type: "output_text" })],
+        role: "assistant",
+        type: "message",
+      }),
+    ]);
+  });
+
+  it("extracts the completed response output from an SSE stream", () => {
+    const output = [
+      {
+        content: [{ annotations: [], text: "streamed summary", type: "output_text" }],
+        role: "assistant",
+        type: "message",
+      },
+    ];
+    const sse = [
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"streamed "}\n\n',
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"summary"}\n\n',
+      `event: response.completed\ndata: ${JSON.stringify({ response: { output }, type: "response.completed" })}\n\n`,
+      "event: done\ndata: [DONE]\n\n",
+    ].join("");
+    expect(responsesCompactionResult(sse, true)).toEqual({ output });
+  });
+
+  it("falls back to streamed text deltas when no completed event carries output", () => {
+    const sse = [
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"only "}\n\n',
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"deltas"}\n\n',
+    ].join("");
+    const result = responsesCompactionResult(sse, true);
+    expect(result.output).toEqual([
+      expect.objectContaining({
+        content: [expect.objectContaining({ text: "only deltas", type: "output_text" })],
+        role: "assistant",
+        type: "message",
+      }),
+    ]);
+  });
+
+  it("returns an empty output array when the upstream body is unusable", () => {
+    expect(responsesCompactionResult("not json", false)).toEqual({ output: [] });
   });
 });
 

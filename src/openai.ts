@@ -115,6 +115,67 @@ export function chatCompletionToResponse(completion: JsonObject, responseId?: st
   });
 }
 
+/**
+ * Reduce a Copilot `/responses` result into the `{ output }` document Codex's
+ * remote-compaction client (`POST /responses/compact`) deserializes. Codex keeps
+ * only assistant/user message items from `output` and discards everything else,
+ * so a Responses `output` array passes through verbatim; when the upstream only
+ * exposes `output_text` (or, for a stream it did not honor `stream: false` on,
+ * `output_text` deltas) a single assistant message is synthesized instead. The
+ * input may be a unary JSON body or an SSE stream, so both framings are handled.
+ */
+export function responsesCompactionResult(upstreamText: string, isSse: boolean): JsonObject {
+  const output = isSse
+    ? compactionOutputFromResponsesSse(upstreamText)
+    : compactionOutputFromResponse(asRecord(safeJsonParse(upstreamText)));
+  return { output };
+}
+
+function compactionOutputFromResponse(response: JsonObject): JsonObject[] {
+  if (Array.isArray(response.output) && response.output.length > 0) {
+    return response.output as JsonObject[];
+  }
+  const text = contentToText(response.output_text);
+  return text ? [messageOutputItem(text)] : [];
+}
+
+function compactionOutputFromResponsesSse(text: string): JsonObject[] {
+  let deltas = "";
+  let completedOutput: JsonObject[] | undefined;
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("");
+    if (!data || data === "[DONE]") {
+      continue;
+    }
+    const record = asRecord(safeJsonParse(data));
+    const type = contentToText(record.type);
+    if (type === "response.output_text.delta") {
+      deltas += contentToText(record.delta);
+    } else if (type === "response.completed" || type === "response.incomplete") {
+      const response = asRecord(record.response);
+      if (Array.isArray(response.output)) {
+        completedOutput = response.output as JsonObject[];
+      }
+    }
+  }
+  if (completedOutput && completedOutput.length > 0) {
+    return completedOutput;
+  }
+  return deltas ? [messageOutputItem(deltas)] : [];
+}
+
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 export function chatCompletionToCompletion(completion: JsonObject): JsonObject {
   return removeUndefined({
     choices: completionChoices(completion).map((choice, index) => {

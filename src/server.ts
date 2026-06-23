@@ -26,6 +26,7 @@ import {
   normalizeModelsResponse,
   normalizeRequestedModel,
   OpenAICompatibilityError,
+  responsesCompactionResult,
 } from "./openai";
 import type {
   CopilotUsage,
@@ -174,6 +175,11 @@ export function createHoopilotHandler(
             requestLogger,
             bufferProxyBodies,
           ),
+        );
+      }
+      if (request.method === "POST" && apiPath === "/v1/responses/compact") {
+        return finish(
+          await handleResponsesCompact(client, metrics, recordTokens, request, requestLogger),
         );
       }
       if (request.method === "POST" && apiPath === "/v1/responses") {
@@ -440,6 +446,38 @@ async function handleResponses(
       bufferProxyBodies,
     ),
   );
+}
+
+/**
+ * Codex's remote context compaction (`POST /responses/compact`, used when the
+ * model provider is named "OpenAI" or is Azure) is a proprietary OpenAI surface
+ * that Copilot does not expose, and Codex has no client-side fallback — a 404
+ * there hard-fails compaction. Satisfy it by running the supplied Responses-API
+ * payload through Copilot's `/responses` as a unary request and returning the
+ * `{ output }` document Codex expects, so the conversation history is replaced
+ * with a real model-produced summary instead of erroring out.
+ */
+async function handleResponsesCompact(
+  client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
+  request: Request,
+  logger: HoopilotLogger,
+): Promise<Response> {
+  const body = await readJson(request);
+  const upstream = await client.responses(
+    JSON.stringify({ ...body, stream: false }),
+    request.signal,
+  );
+  metrics.recordUpstream("/responses", upstream.ok);
+  if (!upstream.ok) {
+    return proxyError(upstream, logger);
+  }
+  logUpstreamSuccess(logger, "/responses", upstream.status);
+  const isSse = isStreamingResponse(upstream);
+  const text = await upstream.text();
+  recordResponseTextUsage(text, isSse, normalizeRequestedModel(body.model), recordTokens);
+  return jsonResponse(responsesCompactionResult(text, isSse));
 }
 
 async function responseWithObservedUsage(
@@ -837,6 +875,8 @@ function canonicalApiPath(path: string): string {
       return "/v1/messages/count_tokens";
     case "/responses":
       return "/v1/responses";
+    case "/responses/compact":
+      return "/v1/responses/compact";
     case "/usage":
       return "/v1/usage";
     default:
@@ -871,6 +911,9 @@ function routeFor(method: string, path: string): string {
   }
   if (method === "POST" && path === "/v1/completions") {
     return "completions";
+  }
+  if (method === "POST" && path === "/v1/responses/compact") {
+    return "responses_compact";
   }
   if (method === "POST" && path === "/v1/responses") {
     return "responses";

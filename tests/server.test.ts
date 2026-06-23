@@ -277,6 +277,63 @@ describe("createHoopilotHandler", () => {
     }
   });
 
+  it("serves Codex remote compaction through a unary Responses call", async () => {
+    const upstreamRequests: Request[] = [];
+    const compactedOutput = [
+      {
+        content: [{ annotations: [], text: "compacted", type: "output_text" }],
+        role: "assistant",
+        type: "message",
+      },
+    ];
+    const handler = createHoopilotHandler(
+      oauthOptions(async (input, init) => {
+        upstreamRequests.push(new Request(input, init));
+        return Response.json({ object: "response", output: compactedOutput, status: "completed" });
+      }),
+    );
+
+    for (const path of ["/v1/responses/compact", "/responses/compact", "/v1/responses/compact/"]) {
+      const response = await handler(
+        new Request(`http://localhost${path}`, {
+          body: JSON.stringify({
+            input: [
+              { content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" },
+            ],
+            instructions: "Summarize the conversation so far.",
+            model: "gpt-5.5",
+          }),
+          method: "POST",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const last = upstreamRequests.at(-1)!;
+      expect(last.url).toBe("https://api.githubcopilot.com/responses");
+      // Compaction is a unary request even though Codex normally streams.
+      await expect(last.json()).resolves.toMatchObject({ model: "gpt-5.5", stream: false });
+      await expect(response.json()).resolves.toEqual({ output: compactedOutput });
+    }
+  });
+
+  it("maps Responses compaction upstream errors instead of returning 404", async () => {
+    const handler = createHoopilotHandler(
+      oauthOptions(async () => new Response("rate limited", { status: 429 })),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses/compact", {
+        body: JSON.stringify({ input: "hi", model: "gpt-5.5" }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "copilot_error", message: "rate limited" },
+    });
+  });
+
   it("tells Codex to fall back when Responses WebSocket is probed", async () => {
     const handler = createHoopilotHandler({
       env: {},
