@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 1.2.0 (2026-06-23)
+
+### Features
+
+- **metrics:** count token-usage extraction outcomes (a027e8b)
+
 ## 1.1.0 (2026-06-23)
 
 ### Features
