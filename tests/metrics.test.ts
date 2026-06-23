@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeCopilotUsage } from "../src/copilot";
+import { normalizeCopilotUsage, parseRateLimitHeaders } from "../src/copilot";
 import { MetricsRegistry, observeResponseUsage, recordResponseTextUsage } from "../src/metrics";
 import { extractTokenUsage } from "../src/openai";
 import type { TokenUsage } from "../src/types";
@@ -231,6 +231,50 @@ describe("MetricsRegistry", () => {
     expect(text).toContain(
       'hoopilot_copilot_info{access_type_sku="copilot_pro",plan="individual_pro"} 1',
     );
+  });
+
+  it("records and renders GitHub rate-limit gauges per resource", () => {
+    const metrics = new MetricsRegistry();
+    metrics.recordGithubRateLimit({
+      limit: 5000,
+      observedAtMs: 1_000,
+      remaining: 4998,
+      resetEpochSeconds: 1782864000,
+      resource: "core",
+      retryAfterSeconds: 30,
+      used: 2,
+    });
+
+    const text = metrics.renderPrometheus();
+    expect(text).toContain("# TYPE hoopilot_github_ratelimit_limit gauge");
+    expect(text).toContain('hoopilot_github_ratelimit_limit{resource="core"} 5000');
+    expect(text).toContain('hoopilot_github_ratelimit_remaining{resource="core"} 4998');
+    expect(text).toContain('hoopilot_github_ratelimit_used{resource="core"} 2');
+    expect(text).toContain(
+      'hoopilot_github_ratelimit_reset_timestamp_seconds{resource="core"} 1782864000',
+    );
+    expect(text).toContain('hoopilot_github_ratelimit_retry_after_seconds{resource="core"} 30');
+
+    expect(metrics.snapshot().githubRateLimit.core).toEqual({
+      limit: 5000,
+      observedAt: new Date(1_000).toISOString(),
+      remaining: 4998,
+      resetAt: new Date(1782864000 * 1000).toISOString(),
+      retryAfterSeconds: 30,
+      used: 2,
+    });
+  });
+
+  it("ignores undefined rate-limit and omits absent gauges", () => {
+    const metrics = new MetricsRegistry();
+    metrics.recordGithubRateLimit(undefined);
+    metrics.recordGithubRateLimit({ observedAtMs: 5, remaining: 10, resource: "core" });
+
+    const text = metrics.renderPrometheus();
+    expect(text).toContain('hoopilot_github_ratelimit_remaining{resource="core"} 10');
+    expect(text).not.toContain("hoopilot_github_ratelimit_limit");
+    expect(text).not.toContain("hoopilot_github_ratelimit_retry_after_seconds");
+    expect(Object.keys(metrics.snapshot().githubRateLimit)).toEqual(["core"]);
   });
 });
 
@@ -490,5 +534,57 @@ describe("normalizeCopilotUsage", () => {
   it("returns empty quotas for an unrecognized body", () => {
     expect(normalizeCopilotUsage({}).quotas).toEqual({});
     expect(normalizeCopilotUsage("nope").quotas).toEqual({});
+  });
+});
+
+describe("parseRateLimitHeaders", () => {
+  it("parses the GitHub x-ratelimit headers", () => {
+    const headers = new Headers({
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4998",
+      "x-ratelimit-reset": "1782864000",
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-used": "2",
+    });
+
+    expect(parseRateLimitHeaders(headers, 1_000)).toEqual({
+      limit: 5000,
+      observedAtMs: 1_000,
+      remaining: 4998,
+      resetEpochSeconds: 1782864000,
+      resource: "core",
+      used: 2,
+    });
+  });
+
+  it("captures retry-after and defaults the resource", () => {
+    const headers = new Headers({ "retry-after": "60", "x-ratelimit-remaining": "0" });
+
+    expect(parseRateLimitHeaders(headers, 5)).toEqual({
+      observedAtMs: 5,
+      remaining: 0,
+      resource: "unknown",
+      retryAfterSeconds: 60,
+    });
+  });
+
+  it("returns undefined when no rate-limit headers are present", () => {
+    expect(
+      parseRateLimitHeaders(new Headers({ "content-type": "application/json" }), 0),
+    ).toBeUndefined();
+  });
+
+  it("ignores malformed and negative values", () => {
+    const headers = new Headers({
+      "x-ratelimit-limit": "not-a-number",
+      "x-ratelimit-remaining": "-5",
+      "x-ratelimit-used": "7",
+    });
+
+    expect(parseRateLimitHeaders(headers, 0)).toEqual({
+      observedAtMs: 0,
+      resource: "unknown",
+      used: 7,
+    });
   });
 });

@@ -7,7 +7,7 @@ import {
   responsesStreamToAnthropicStream,
 } from "./anthropic";
 import { CopilotAuthError } from "./auth";
-import { CopilotClient, normalizeCopilotUsage } from "./copilot";
+import { CopilotClient, normalizeCopilotUsage, parseRateLimitHeaders } from "./copilot";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
   MetricsRegistry,
@@ -1061,6 +1061,10 @@ export function createUsageReader(
     try {
       const upstream = await client.usage(signal);
       metrics.recordUpstream(usagePath, upstream.ok);
+      // api.github.com returns the x-ratelimit-* budget on every reply — on the
+      // error path too, where retry-after / a spent budget is the useful signal —
+      // so capture it off the quota call without spending an extra request.
+      metrics.recordGithubRateLimit(parseRateLimitHeaders(upstream.headers, now()));
       if (!upstream.ok) {
         return { error: `GitHub Copilot usage request failed with ${upstream.status}.` };
       }

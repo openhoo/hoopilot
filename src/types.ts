@@ -124,8 +124,42 @@ export interface CopilotUsage {
   quotas: Record<string, CopilotQuota>;
 }
 
+/**
+ * GitHub REST API rate-limit budget parsed from the `x-ratelimit-*` headers that
+ * `api.github.com` returns on every response. Hoopilot reads these off the
+ * `copilot_internal/user` quota call it already makes, so the proxy's GitHub API
+ * usage is visible without spending an extra request.
+ */
+export interface GithubRateLimit {
+  /** `x-ratelimit-resource` — the bucket the request counted against (e.g. `core`). */
+  resource: string;
+  /** `x-ratelimit-limit` — maximum requests allowed in the current window. */
+  limit?: number;
+  /** `x-ratelimit-remaining` — requests left in the current window. */
+  remaining?: number;
+  /** `x-ratelimit-used` — requests already spent in the current window. */
+  used?: number;
+  /** `x-ratelimit-reset` — Unix epoch seconds when the window resets. */
+  resetEpochSeconds?: number;
+  /** `retry-after` — seconds to wait, present on 429 / secondary-limit responses. */
+  retryAfterSeconds?: number;
+  /** Wall-clock epoch ms when these values were observed. */
+  observedAtMs: number;
+}
+
+/** JSON view of one GitHub rate-limit resource, as rendered into a snapshot. */
+export interface GithubRateLimitSnapshot {
+  limit?: number;
+  observedAt: string;
+  remaining?: number;
+  resetAt?: string;
+  retryAfterSeconds?: number;
+  used?: number;
+}
+
 /** A point-in-time JSON view of the in-process metrics. */
 export interface MetricsSnapshot {
+  githubRateLimit: Record<string, GithubRateLimitSnapshot>;
   inFlight: number;
   requests: {
     byRoute: Record<string, number>;

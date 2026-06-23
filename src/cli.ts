@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
 import { main as codexxMain } from "./codexx";
-import { applyCopilotHeaders, CopilotClient, normalizeCopilotUsage } from "./copilot";
+import {
+  applyCopilotHeaders,
+  CopilotClient,
+  normalizeCopilotUsage,
+  parseRateLimitHeaders,
+} from "./copilot";
 import {
   type GithubCopilotDeviceLoginOptions,
   type GithubCopilotDeviceLoginResult,
@@ -18,6 +23,7 @@ import type {
   CopilotQuota,
   CopilotUsage,
   FetchLike,
+  GithubRateLimit,
   HoopilotLogger,
   HoopilotServerOptions,
   Logger,
@@ -336,6 +342,7 @@ export async function runUsage(options: HoopilotServerOptions = {}): Promise<Cop
     throw new Error(message);
   }
 
+  const rateLimit = parseRateLimitHeaders(response.headers);
   const usage = normalizeCopilotUsage(await response.json().catch(() => ({})));
   logger.debug(
     { event: "usage.fetch.succeeded", plan: usage.plan },
@@ -344,7 +351,31 @@ export async function runUsage(options: HoopilotServerOptions = {}): Promise<Cop
   for (const line of formatCopilotUsage(usage)) {
     console.log(line);
   }
+  if (rateLimit) {
+    console.log(formatGithubRateLimit(rateLimit));
+  }
   return usage;
+}
+
+function formatGithubRateLimit(rateLimit: GithubRateLimit): string {
+  const parts: string[] = [];
+  if (rateLimit.remaining !== undefined && rateLimit.limit !== undefined) {
+    parts.push(`${rateLimit.remaining}/${rateLimit.limit} requests remaining`);
+  } else if (rateLimit.remaining !== undefined) {
+    parts.push(`${rateLimit.remaining} requests remaining`);
+  } else if (rateLimit.used !== undefined) {
+    parts.push(`${rateLimit.used} requests used`);
+  }
+  if (rateLimit.resetEpochSeconds !== undefined) {
+    parts.push(`resets ${new Date(rateLimit.resetEpochSeconds * 1000).toISOString()}`);
+  }
+  if (rateLimit.retryAfterSeconds !== undefined) {
+    parts.push(`retry after ${rateLimit.retryAfterSeconds}s`);
+  }
+  const detail = parts.length > 0 ? parts.join(", ") : "n/a";
+  const resource =
+    rateLimit.resource && rateLimit.resource !== "unknown" ? ` (${rateLimit.resource})` : "";
+  return `GitHub API rate limit${resource}: ${detail}`;
 }
 
 function formatCopilotUsage(usage: CopilotUsage): string[] {

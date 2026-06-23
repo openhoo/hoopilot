@@ -4,6 +4,7 @@ import type {
   CopilotQuota,
   CopilotUsage,
   FetchLike,
+  GithubRateLimit,
   JsonObject,
 } from "./types";
 import { asRecord, envValue, isTrustedTokenBaseUrl, trimTrailingSlash } from "./util";
@@ -52,6 +53,61 @@ export function applyGithubApiHeaders(headers: Headers, token: string): Headers 
   headers.set("user-agent", "hoopilot/0.1.0");
   headers.set("x-github-api-version", COPILOT_USAGE_API_VERSION);
   return headers;
+}
+
+/**
+ * Parse the GitHub REST `x-ratelimit-*` headers (plus `retry-after`) off a
+ * response into a {@link GithubRateLimit}. `api.github.com` returns these on
+ * every reply, so the proxy reads its GitHub API budget from the quota call it
+ * already makes — no extra request is spent. Returns undefined when the response
+ * carries no rate-limit headers (for example the Copilot completion host, which
+ * does not emit them today) so callers record nothing rather than a phantom row.
+ */
+export function parseRateLimitHeaders(
+  headers: Headers,
+  nowMs: number = Date.now(),
+): GithubRateLimit | undefined {
+  const limit = headerInt(headers, "x-ratelimit-limit");
+  const remaining = headerInt(headers, "x-ratelimit-remaining");
+  const used = headerInt(headers, "x-ratelimit-used");
+  const resetEpochSeconds = headerInt(headers, "x-ratelimit-reset");
+  const retryAfterSeconds = headerInt(headers, "retry-after");
+  if (
+    limit === undefined &&
+    remaining === undefined &&
+    used === undefined &&
+    resetEpochSeconds === undefined &&
+    retryAfterSeconds === undefined
+  ) {
+    return undefined;
+  }
+  return removeUndefinedRateLimit({
+    limit,
+    observedAtMs: nowMs,
+    remaining,
+    resetEpochSeconds,
+    resource: headers.get("x-ratelimit-resource")?.trim() || "unknown",
+    retryAfterSeconds,
+    used,
+  });
+}
+
+// Parse a non-negative integer header (the rate-limit headers are all integers;
+// retry-after is integer seconds on GitHub's secondary limits). A missing or
+// malformed header yields undefined so it is simply omitted from the result.
+function headerInt(headers: Headers, name: string): number | undefined {
+  const raw = headers.get(name);
+  if (raw === null) {
+    return undefined;
+  }
+  const value = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function removeUndefinedRateLimit(rateLimit: GithubRateLimit): GithubRateLimit {
+  return Object.fromEntries(
+    Object.entries(rateLimit).filter(([, value]) => value !== undefined),
+  ) as unknown as GithubRateLimit;
 }
 
 export class CopilotClient {

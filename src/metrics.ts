@@ -1,6 +1,8 @@
 import { extractTokenUsage } from "./openai";
 import type {
   CopilotUsage,
+  GithubRateLimit,
+  GithubRateLimitSnapshot,
   MetricsSnapshot,
   ModelTokenTotals,
   RequestObservation,
@@ -20,6 +22,9 @@ const USAGE_BUFFER_LIMIT_BYTES = 16 * 1024 * 1024;
 /** Bound the distinct model labels so a hostile client cannot blow up cardinality. */
 const MAX_TRACKED_MODELS = 200;
 const MAX_MODEL_LABEL_LENGTH = 200;
+
+/** GitHub exposes a small fixed set of rate-limit resources; bound it anyway. */
+const MAX_TRACKED_RATELIMIT_RESOURCES = 32;
 
 // Unit separator (ASCII 0x1f): joins label parts; cannot collide with a label value.
 const LABEL_SEPARATOR = "\u001f";
@@ -49,6 +54,7 @@ export class MetricsRegistry {
   #tokens = new Map<string, ModelTokenTotals>();
   #upstream = new Map<string, number>();
   #copilotQuota?: CopilotUsage;
+  #githubRateLimit = new Map<string, GithubRateLimit>();
 
   constructor(options: { now?: () => number } = {}) {
     this.#startedAtMs = (options.now ?? Date.now)();
@@ -93,18 +99,40 @@ export class MetricsRegistry {
     this.#copilotQuota = usage;
   }
 
-  // Sanitize the model into a bounded, control-char-free label. The model can
-  // originate from a client request, so cap its length, strip characters that
-  // would corrupt the exposition format, and fold overflow past the cardinality
-  // limit into UNKNOWN_MODEL to keep the series count bounded.
+  /**
+   * Store the latest GitHub REST rate-limit budget, keyed by its resource bucket.
+   * A no-op when `rateLimit` is undefined (the response carried no rate-limit
+   * headers) so callers can pass {@link parseRateLimitHeaders} output directly.
+   */
+  recordGithubRateLimit(rateLimit: GithubRateLimit | undefined): void {
+    if (!rateLimit) {
+      return;
+    }
+    const resource = this.#rateLimitResource(rateLimit.resource);
+    this.#githubRateLimit.set(resource, { ...rateLimit, resource });
+  }
+
+  // Sanitize the model into a bounded label. The model can originate from a
+  // client request, so cap its length, strip characters that would corrupt the
+  // exposition format, and fold overflow past the cardinality limit into
+  // UNKNOWN_MODEL to keep the series count bounded.
   #modelLabel(model: string): string {
-    const cleaned =
-      model
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control chars is the intent.
-        .replace(/[\u0000-\u001f\u007f]/g, "")
-        .trim()
-        .slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
+    const cleaned = cleanLabel(model).slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
     if (!this.#tokens.has(cleaned) && this.#tokens.size >= MAX_TRACKED_MODELS) {
+      return UNKNOWN_MODEL;
+    }
+    return cleaned;
+  }
+
+  // The resource comes from a trusted upstream header, but clean and bound it
+  // with the same discipline as model labels: strip control characters that
+  // would corrupt the exposition format and fold overflow into "unknown".
+  #rateLimitResource(resource: string): string {
+    const cleaned = cleanLabel(resource).slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
+    if (
+      !this.#githubRateLimit.has(cleaned) &&
+      this.#githubRateLimit.size >= MAX_TRACKED_RATELIMIT_RESOURCES
+    ) {
       return UNKNOWN_MODEL;
     }
     return cleaned;
@@ -160,7 +188,13 @@ export class MetricsRegistry {
       }
     }
 
+    const githubRateLimit: Record<string, GithubRateLimitSnapshot> = {};
+    for (const [resource, rateLimit] of this.#githubRateLimit) {
+      githubRateLimit[resource] = toRateLimitSnapshot(rateLimit);
+    }
+
     return {
+      githubRateLimit,
       inFlight: this.#inFlight,
       requests: { byRoute, byStatus, total: requestsTotal },
       startedAt: new Date(this.#startedAtMs).toISOString(),
@@ -241,9 +275,49 @@ export class MetricsRegistry {
       lines.push(`hoopilot_request_duration_seconds_count${labels({ route })} ${entry.count}`);
     }
 
+    this.#renderGithubRateLimit(lines);
     this.#renderCopilotQuota(lines);
 
     return `${lines.join("\n")}\n`;
+  }
+
+  #renderGithubRateLimit(lines: string[]): void {
+    const entries = [...this.#githubRateLimit.values()];
+    if (entries.length === 0) {
+      return;
+    }
+
+    const gauge = (
+      suffix: string,
+      help: string,
+      pick: (rateLimit: GithubRateLimit) => number | undefined,
+    ): void => {
+      const present = entries.filter((rateLimit) => pick(rateLimit) !== undefined);
+      if (present.length === 0) {
+        return;
+      }
+      lines.push(`# HELP hoopilot_github_ratelimit_${suffix} ${help}`);
+      lines.push(`# TYPE hoopilot_github_ratelimit_${suffix} gauge`);
+      for (const rateLimit of present) {
+        lines.push(
+          `hoopilot_github_ratelimit_${suffix}${labels({ resource: rateLimit.resource })} ${pick(rateLimit)}`,
+        );
+      }
+    };
+
+    gauge("limit", "GitHub REST API request ceiling for the resource window.", (r) => r.limit);
+    gauge("remaining", "Requests remaining in the GitHub REST API window.", (r) => r.remaining);
+    gauge("used", "Requests used in the GitHub REST API window.", (r) => r.used);
+    gauge(
+      "reset_timestamp_seconds",
+      "Unix epoch when the GitHub REST API window resets.",
+      (r) => r.resetEpochSeconds,
+    );
+    gauge(
+      "retry_after_seconds",
+      "Seconds to wait after a GitHub secondary-limit response.",
+      (r) => r.retryAfterSeconds,
+    );
   }
 
   #renderCopilotQuota(lines: string[]): void {
@@ -547,6 +621,44 @@ function modelText(value: unknown): string {
 
 function nonNegative(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// Drop ASCII control characters (and DEL) that would corrupt the Prometheus
+// exposition format, then trim. Used for labels sourced from an upstream header,
+// mirroring the control-char stripping applied to client-supplied model labels.
+function cleanLabel(value: string): string {
+  let result = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code > 0x1f && code !== 0x7f) {
+      result += char;
+    }
+  }
+  return result.trim();
+}
+
+// Convert the internal rate-limit record into its JSON snapshot shape: the epoch
+// reset and observation times become ISO strings, and absent fields stay absent.
+function toRateLimitSnapshot(rateLimit: GithubRateLimit): GithubRateLimitSnapshot {
+  const snapshot: GithubRateLimitSnapshot = {
+    observedAt: new Date(rateLimit.observedAtMs).toISOString(),
+  };
+  if (rateLimit.limit !== undefined) {
+    snapshot.limit = rateLimit.limit;
+  }
+  if (rateLimit.remaining !== undefined) {
+    snapshot.remaining = rateLimit.remaining;
+  }
+  if (rateLimit.used !== undefined) {
+    snapshot.used = rateLimit.used;
+  }
+  if (rateLimit.resetEpochSeconds !== undefined) {
+    snapshot.resetAt = new Date(rateLimit.resetEpochSeconds * 1000).toISOString();
+  }
+  if (rateLimit.retryAfterSeconds !== undefined) {
+    snapshot.retryAfterSeconds = rateLimit.retryAfterSeconds;
+  }
+  return snapshot;
 }
 
 function labelKey(...parts: string[]): string {

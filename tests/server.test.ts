@@ -1389,6 +1389,69 @@ describe("metrics and usage endpoints", () => {
     expect(metrics.snapshot().upstream.total).toBe(2);
   });
 
+  it("captures GitHub REST rate-limit headers from the quota response", async () => {
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () =>
+        Response.json(
+          {
+            copilot_plan: "individual_pro",
+            quota_snapshots: { premium_interactions: { entitlement: 300, remaining: 290 } },
+          },
+          {
+            headers: {
+              "x-ratelimit-limit": "5000",
+              "x-ratelimit-remaining": "4990",
+              "x-ratelimit-reset": "1782864000",
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-used": "10",
+            },
+          },
+        ),
+    });
+    const metrics = new MetricsRegistry();
+    const read = createUsageReader(client, metrics, () => 1_000, 60_000);
+
+    await read();
+
+    expect(metrics.snapshot().githubRateLimit.core).toMatchObject({
+      limit: 5000,
+      remaining: 4990,
+      resetAt: new Date(1782864000 * 1000).toISOString(),
+      used: 10,
+    });
+    expect(metrics.renderPrometheus()).toContain(
+      'hoopilot_github_ratelimit_remaining{resource="core"} 4990',
+    );
+  });
+
+  it("captures rate-limit headers even when the quota request fails", async () => {
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () =>
+        new Response("rate limited", {
+          headers: {
+            "retry-after": "120",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-resource": "core",
+          },
+          status: 429,
+        }),
+    });
+    const metrics = new MetricsRegistry();
+    const read = createUsageReader(client, metrics, () => 2_000, 60_000);
+
+    const result = await read();
+
+    expect(result.error).toContain("429");
+    expect(metrics.snapshot().githubRateLimit.core).toMatchObject({
+      remaining: 0,
+      retryAfterSeconds: 120,
+    });
+  });
+
   it("reports Copilot quota errors without failing /v1/usage", async () => {
     const handler = createHoopilotHandler(
       oauthOptions(async () => new Response("forbidden", { status: 403 })),

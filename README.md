@@ -267,13 +267,15 @@ Incoming `x-request-id` headers are preserved on responses. If a request has no 
 
 ## Metrics and usage
 
-Hoopilot tracks token usage, request counts, and latency in memory while the server runs. It can also report your GitHub Copilot account quota and premium-request usage.
+Hoopilot tracks token usage, request counts, and latency in memory while the server runs. It can also report your GitHub Copilot account quota and premium-request usage, plus your GitHub REST API rate-limit budget.
 
-- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters, upstream call counters, token counters by model and type, a request-duration histogram, an in-flight gauge, and Copilot quota gauges after `/v1/usage` has been fetched at least once. Counters reset to zero on restart, which Prometheus handles natively.
-- `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub and cached for 60 seconds. If quota cannot be read, `copilot` is `null` and `copilot_error` explains why.
-- `hoopilot usage` prints your Copilot plan and quota from the command line.
+- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters, upstream call counters, token counters by model and type, a request-duration histogram, an in-flight gauge, Copilot quota gauges, and GitHub REST API rate-limit gauges (`hoopilot_github_ratelimit_limit`, `_remaining`, `_used`, `_reset_timestamp_seconds`, `_retry_after_seconds`, labelled by `resource`) — the quota and rate-limit series appear after `/v1/usage` has been fetched at least once. Counters reset to zero on restart, which Prometheus handles natively.
+- `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub and cached for 60 seconds. If quota cannot be read, `copilot` is `null` and `copilot_error` explains why. The snapshot's `proxy.githubRateLimit` field reports the most recent GitHub REST rate-limit budget per resource (`limit`, `remaining`, `used`, `resetAt`, `retryAfterSeconds`, `observedAt`).
+- `hoopilot usage` prints your Copilot plan and quota — and, when GitHub returns them, your GitHub API rate-limit budget — from the command line.
 
 Token usage is read from the upstream `usage` object. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot does not inject that flag. Responses API streaming always reports usage, so streamed Responses requests are fully accounted.
+
+GitHub API usage is read from the `x-ratelimit-*` response headers that `api.github.com` returns on the `copilot_internal/user` quota call Hoopilot already makes, so it costs no extra request. (The Copilot completion host `api.githubcopilot.com` does not currently emit these headers, so per-completion rate-limit data is not yet available there.)
 
 `/metrics` and `/v1/usage` are subject to the same `HOOPILOT_API_KEY` gate as the other routes.
 

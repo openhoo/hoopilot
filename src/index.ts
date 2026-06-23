@@ -14,6 +14,7 @@ export {
   CopilotClient,
   DEFAULT_GITHUB_API_BASE_URL,
   normalizeCopilotUsage,
+  parseRateLimitHeaders,
 } from "./copilot";
 export { githubCopilotDeviceLogin } from "./github-device";
 export {
@@ -51,6 +52,8 @@ export type {
   CopilotQuota,
   CopilotUsage,
   FetchLike,
+  GithubRateLimit,
+  GithubRateLimitSnapshot,
   HoopilotLogger,
   HoopilotLoggerOptions,
   HoopilotServerOptions,
