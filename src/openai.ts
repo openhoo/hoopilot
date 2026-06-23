@@ -183,6 +183,27 @@ export function completionStreamFromChatStream(
   });
 }
 
+export function completionSseTextFromChatSseText(text: string): string {
+  const chunks: string[] = [];
+  let sawTerminalEvent = false;
+  const enqueue = (data: JsonObject | "[DONE]") => {
+    chunks.push(encodeDataSse(data));
+  };
+  const markTerminal = () => {
+    sawTerminalEvent = true;
+  };
+
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    if (block.trim()) {
+      processCompletionSseBlock(block, enqueue, markTerminal);
+    }
+  }
+  if (!sawTerminalEvent) {
+    enqueue("[DONE]");
+  }
+  return chunks.join("");
+}
+
 export function normalizeModelsResponse(upstream: unknown): JsonObject {
   const record = asRecord(upstream);
   const data = Array.isArray(record.data) ? record.data : Array.isArray(upstream) ? upstream : [];

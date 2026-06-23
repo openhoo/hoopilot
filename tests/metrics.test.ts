@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { normalizeCopilotUsage } from "../src/copilot";
-import { MetricsRegistry, observeResponseUsage } from "../src/metrics";
+import { MetricsRegistry, observeResponseUsage, recordResponseTextUsage } from "../src/metrics";
 import { extractTokenUsage } from "../src/openai";
 import type { TokenUsage } from "../src/types";
 
@@ -291,6 +291,24 @@ describe("observeResponseUsage", () => {
       promptTokens: 20,
       reasoningTokens: 4,
       totalTokens: 28,
+    });
+  });
+
+  it("captures usage from buffered SSE text", () => {
+    const { recorder, sink } = makeRecorder();
+    recordResponseTextUsage(
+      [
+        'event: response.output_text.delta\ndata: {"delta":"hi"}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":{"model":"gpt-5.5","usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28}}}\n\n',
+      ].join(""),
+      true,
+      "fallback",
+      recorder,
+    );
+
+    expect(sink[0]).toEqual({
+      model: "gpt-5.5",
+      usage: { completionTokens: 8, promptTokens: 20, totalTokens: 28 },
     });
   });
 

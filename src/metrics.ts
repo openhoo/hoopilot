@@ -399,6 +399,27 @@ export function observeResponseUsage(
   });
 }
 
+/** Extract and record token usage from an already-buffered response body. */
+export function recordResponseTextUsage(
+  text: string,
+  isSse: boolean,
+  fallbackModel: string,
+  onUsage: (model: string, usage: TokenUsage) => void,
+): void {
+  const accumulator = createUsageAccumulator(fallbackModel, onUsage);
+  if (isSse) {
+    for (const line of text.split(/\r?\n/)) {
+      considerSseLine(line, accumulator.consider);
+    }
+  } else {
+    const parsed = safeParse(text);
+    if (parsed !== undefined) {
+      accumulator.consider(parsed);
+    }
+  }
+  accumulator.finish();
+}
+
 async function consumeUsage(
   stream: ReadableStream<Uint8Array>,
   isSse: boolean,
@@ -417,24 +438,10 @@ async function consumeUsage(
   }
 
   const decoder = new TextDecoder();
-  let model = fallbackModel;
-  let usage: TokenUsage | undefined;
+  const accumulator = createUsageAccumulator(fallbackModel, onUsage);
   let buffer = "";
   let bufferedBytes = 0;
   let overflowed = false;
-
-  const consider = (payload: unknown): void => {
-    const record = asRecord(payload);
-    const found =
-      extractTokenUsage(record.usage) ?? extractTokenUsage(asRecord(record.response).usage);
-    if (found) {
-      usage = found;
-    }
-    const candidateModel = modelText(record.model) || modelText(asRecord(record.response).model);
-    if (candidateModel) {
-      model = candidateModel;
-    }
-  };
 
   try {
     while (true) {
@@ -448,7 +455,7 @@ async function consumeUsage(
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          considerSseLine(line, consider);
+          considerSseLine(line, accumulator.consider);
         }
         // Drop a pathologically long newline-less line so the buffer stays bounded.
         if (buffer.length > USAGE_BUFFER_LIMIT_BYTES) {
@@ -468,12 +475,12 @@ async function consumeUsage(
     const finalBuffer = buffer + decoder.decode();
     if (isSse) {
       if (finalBuffer) {
-        considerSseLine(finalBuffer, consider);
+        considerSseLine(finalBuffer, accumulator.consider);
       }
     } else if (!overflowed && finalBuffer) {
       const parsed = safeParse(finalBuffer);
       if (parsed !== undefined) {
-        consider(parsed);
+        accumulator.consider(parsed);
       }
     }
   } finally {
@@ -481,9 +488,34 @@ async function consumeUsage(
     reader.releaseLock();
   }
 
-  if (usage) {
-    onUsage(model, usage);
-  }
+  accumulator.finish();
+}
+
+function createUsageAccumulator(
+  fallbackModel: string,
+  onUsage: (model: string, usage: TokenUsage) => void,
+): { consider: (payload: unknown) => void; finish: () => void } {
+  let model = fallbackModel;
+  let usage: TokenUsage | undefined;
+  return {
+    consider(payload) {
+      const record = asRecord(payload);
+      const found =
+        extractTokenUsage(record.usage) ?? extractTokenUsage(asRecord(record.response).usage);
+      if (found) {
+        usage = found;
+      }
+      const candidateModel = modelText(record.model) || modelText(asRecord(record.response).model);
+      if (candidateModel) {
+        model = candidateModel;
+      }
+    },
+    finish() {
+      if (usage) {
+        onUsage(model, usage);
+      }
+    },
+  };
 }
 
 function considerSseLine(line: string, consider: (payload: unknown) => void): void {

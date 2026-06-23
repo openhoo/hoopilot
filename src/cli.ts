@@ -182,6 +182,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--log-level":
         args.logLevel = parseLogLevel(optionValue(name, inlineValue, rest));
         break;
+      case "--stream-mode":
+        args.streamingProxyMode = parseStreamMode(optionValue(name, inlineValue, rest));
+        break;
       case "--host":
         args.host = optionValue(name, inlineValue, rest);
         break;
@@ -200,6 +203,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return args;
+}
+
+function parseStreamMode(value: string): "auto" | "buffer" | "live" {
+  if (value === "auto" || value === "buffer" || value === "live") {
+    return value;
+  }
+  throw new Error(`Invalid stream mode: ${value}. Expected auto, live, or buffer.`);
 }
 
 function optionValue(name: string, inlineValue: string | undefined, rest: string[]): string {
@@ -496,6 +506,7 @@ Options:
       --copilot-api-base-url <url>  Copilot API base URL override
       --log-level <level>           trace, debug, info, warn, error, fatal, or silent
       --log-format <format>         json or pretty. Default: pretty
+      --stream-mode <mode>          auto, live, or buffer. Auto buffers Windows standalone streams.
       --no-update-check             Do not check GitHub for a newer release
       --allow-unauthenticated       Allow non-loopback bind without --api-key
   -h, --help                        Show help
@@ -508,6 +519,7 @@ Environment:
   HOOPILOT_GITHUB_DOMAIN
   HOOPILOT_LOG_FORMAT               json or pretty. Default: pretty
   HOOPILOT_LOG_LEVEL                trace, debug, info, warn, error, fatal, or silent
+  HOOPILOT_STREAM_MODE              auto, live, or buffer
   COPILOT_API_BASE_URL
   HOOPILOT_GITHUB_API_BASE_URL      GitHub REST base for the usage/quota lookup. Default: https://api.github.com
   HOOPILOT_ALLOW_UNSAFE_UPSTREAM    Set to 1 to allow nonstandard HTTPS token hosts

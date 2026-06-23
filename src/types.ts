@@ -11,6 +11,7 @@ export interface Logger {
 export type LogFields = Record<string, unknown>;
 export type LogFormat = "json" | "pretty";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "silent";
+export type StreamingProxyMode = "auto" | "buffer" | "live";
 
 export interface LogMethod {
   (message: string): void;
@@ -60,6 +61,7 @@ export interface HoopilotServerOptions extends CopilotAuthOptions {
   logLevel?: LogLevel | string;
   metrics?: MetricsRegistry;
   port?: number;
+  streamingProxyMode?: StreamingProxyMode | string;
 }
 
 export interface StartedHoopilotServer {

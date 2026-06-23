@@ -17,6 +17,8 @@ describe("parseArgs", () => {
         "--log-format",
         "pretty",
         "--log-level=debug",
+        "--stream-mode",
+        "buffer",
         "--port",
         "4242",
       ]),
@@ -26,6 +28,7 @@ describe("parseArgs", () => {
       logFormat: "pretty",
       logLevel: "debug",
       port: 4242,
+      streamingProxyMode: "buffer",
     });
   });
 
@@ -77,6 +80,10 @@ describe("parseArgs", () => {
   it("rejects invalid logging options", () => {
     expect(() => parseArgs(["--log-level", "verbose"])).toThrow("Invalid log level");
     expect(() => parseArgs(["--log-format", "text"])).toThrow("Invalid log format");
+  });
+
+  it("rejects invalid stream modes", () => {
+    expect(() => parseArgs(["--stream-mode", "fast"])).toThrow("Invalid stream mode");
   });
 
   it("rejects ports outside the TCP range", () => {

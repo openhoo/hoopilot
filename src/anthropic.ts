@@ -78,16 +78,7 @@ export function responsesStreamToAnthropicStream(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
-  const state: AnthropicStreamState = {
-    blocks: new Map(),
-    completed: false,
-    messageId: options.messageId ?? `msg_${randomId()}`,
-    model: options.model,
-    nextBlockIndex: 0,
-    sawToolUse: false,
-    started: false,
-    usage: anthropicUsage(undefined),
-  };
+  const state = createAnthropicStreamState(options);
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -124,6 +115,25 @@ export function responsesStreamToAnthropicStream(
   });
 }
 
+export function responsesSseTextToAnthropicSseText(
+  text: string,
+  options: AnthropicStreamOptions,
+): string {
+  const chunks: string[] = [];
+  const state = createAnthropicStreamState(options);
+  const enqueue = (event: string, data: JsonObject) => {
+    chunks.push(encodeSse(event, data));
+  };
+
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    if (block.trim()) {
+      processResponsesSseBlock(block, state, enqueue);
+    }
+  }
+  finishAnthropicStream(state, enqueue);
+  return chunks.join("");
+}
+
 export function estimateAnthropicMessageTokens(request: JsonObject): JsonObject {
   const chars =
     estimatedTextSize(request.system) +
@@ -137,6 +147,19 @@ export function estimateAnthropicMessageTokens(request: JsonObject): JsonObject 
   return {
     input_tokens: inputTokens,
     total_tokens: inputTokens,
+  };
+}
+
+function createAnthropicStreamState(options: AnthropicStreamOptions): AnthropicStreamState {
+  return {
+    blocks: new Map(),
+    completed: false,
+    messageId: options.messageId ?? `msg_${randomId()}`,
+    model: options.model,
+    nextBlockIndex: 0,
+    sawToolUse: false,
+    started: false,
+    usage: anthropicUsage(undefined),
   };
 }
 

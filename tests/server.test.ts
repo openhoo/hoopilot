@@ -412,6 +412,51 @@ describe("createHoopilotHandler", () => {
     expect(text).toContain("event: message_stop");
   });
 
+  it("buffers streaming Claude Code responses when stream mode is buffer", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(
+        async () =>
+          new Response(
+            [
+              'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"claude-sonnet-4.5"}}\n\n',
+              'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"ok"}\n\n',
+              'event: response.completed\ndata: {"type":"response.completed","response":{"model":"claude-sonnet-4.5","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+            ].join(""),
+            {
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+      ),
+      metrics,
+      streamingProxyMode: "buffer",
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/messages", {
+        body: JSON.stringify({
+          max_tokens: 64,
+          messages: [{ content: "hi", role: "user" }],
+          model: "claude-sonnet-4.5",
+          stream: true,
+        }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("connection")).toBe("close");
+    const text = await response.text();
+    expect(text).toContain("event: message_start");
+    expect(text).toContain('"text":"ok"');
+    expect(text).toContain("event: message_stop");
+    expect(metrics.snapshot().tokens.byModel["claude-sonnet-4.5"]).toMatchObject({
+      completion: 1,
+      prompt: 3,
+      total: 4,
+    });
+  });
+
   it("serves Claude Code token-count preflights without an upstream request", async () => {
     let calls = 0;
     const handler = createHoopilotHandler(

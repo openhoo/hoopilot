@@ -3,14 +3,21 @@ import {
   anthropicMessagesToResponsesRequest,
   estimateAnthropicMessageTokens,
   responsesResponseToAnthropicMessage,
+  responsesSseTextToAnthropicSseText,
   responsesStreamToAnthropicStream,
 } from "./anthropic";
 import { CopilotAuthError } from "./auth";
 import { CopilotClient, normalizeCopilotUsage } from "./copilot";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
-import { MetricsRegistry, observeResponseUsage, PROMETHEUS_CONTENT_TYPE } from "./metrics";
+import {
+  MetricsRegistry,
+  observeResponseUsage,
+  PROMETHEUS_CONTENT_TYPE,
+  recordResponseTextUsage,
+} from "./metrics";
 import {
   chatCompletionToCompletion,
+  completionSseTextFromChatSseText,
   completionStreamFromChatStream,
   completionsRequestToChatCompletion,
   extractTokenUsage,
@@ -27,9 +34,11 @@ import type {
   JsonObject,
   LogFields,
   StartedHoopilotServer,
+  StreamingProxyMode,
   TokenUsage,
 } from "./types";
 import { asRecord, envValue } from "./util";
+import { IS_STANDALONE_BINARY } from "./version";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
@@ -66,6 +75,8 @@ export function createHoopilotHandler(
   const metrics = options.metrics ?? new MetricsRegistry();
   const readUsage = createUsageReader(client, metrics);
   const recordTokens: TokenRecorder = (model, usage) => metrics.recordTokens(model, usage);
+  const streamingProxyMode = resolveStreamingProxyMode(options);
+  const bufferProxyBodies = shouldBufferProxyBodies(streamingProxyMode);
 
   return async (request: Request): Promise<Response> => {
     const startedAt = performance.now();
@@ -88,6 +99,8 @@ export function createHoopilotHandler(
         requestId,
         route,
         startedAt,
+        closeConnection: bufferProxyBodies,
+        trackStreamingBody: !bufferProxyBodies,
       });
 
     const browserOrigin = forbiddenBrowserOrigin(request, apiKey);
@@ -126,7 +139,14 @@ export function createHoopilotHandler(
       }
       if (request.method === "POST" && apiPath === "/v1/messages") {
         return finish(
-          await handleAnthropicMessages(client, metrics, recordTokens, request, requestLogger),
+          await handleAnthropicMessages(
+            client,
+            metrics,
+            recordTokens,
+            request,
+            requestLogger,
+            bufferProxyBodies,
+          ),
         );
       }
       if (request.method === "POST" && apiPath === "/v1/messages/count_tokens") {
@@ -134,16 +154,39 @@ export function createHoopilotHandler(
       }
       if (request.method === "POST" && apiPath === "/v1/chat/completions") {
         return finish(
-          await handleChatCompletions(client, metrics, recordTokens, request, requestLogger),
+          await handleChatCompletions(
+            client,
+            metrics,
+            recordTokens,
+            request,
+            requestLogger,
+            bufferProxyBodies,
+          ),
         );
       }
       if (request.method === "POST" && apiPath === "/v1/completions") {
         return finish(
-          await handleCompletions(client, metrics, recordTokens, request, requestLogger),
+          await handleCompletions(
+            client,
+            metrics,
+            recordTokens,
+            request,
+            requestLogger,
+            bufferProxyBodies,
+          ),
         );
       }
       if (request.method === "POST" && apiPath === "/v1/responses") {
-        return finish(await handleResponses(client, metrics, recordTokens, request, requestLogger));
+        return finish(
+          await handleResponses(
+            client,
+            metrics,
+            recordTokens,
+            request,
+            requestLogger,
+            bufferProxyBodies,
+          ),
+        );
       }
       return finish(jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`));
     } catch (error) {
@@ -223,6 +266,7 @@ async function handleAnthropicMessages(
   recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
+  bufferProxyBodies: boolean,
 ): Promise<Response> {
   const anthropicRequest = await readJson(request);
   const responsesRequest = anthropicMessagesToResponsesRequest(anthropicRequest);
@@ -235,6 +279,13 @@ async function handleAnthropicMessages(
   const model = normalizeRequestedModel(responsesRequest.model);
 
   if (isStreamingResponse(upstream) && upstream.body) {
+    if (bufferProxyBodies) {
+      const text = await upstream.text();
+      recordResponseTextUsage(text, true, model, recordTokens);
+      return proxyResponse(
+        responseFromText(upstream, responsesSseTextToAnthropicSseText(text, { model })),
+      );
+    }
     const observed = observeResponseUsage(upstream, model, recordTokens, request.signal);
     if (!observed.body) {
       return proxyResponse(observed);
@@ -293,6 +344,7 @@ async function handleChatCompletions(
   recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
+  bufferProxyBodies: boolean,
 ): Promise<Response> {
   const chatRequest = normalizeChatCompletionRequest(await readJson(request));
   const upstream = await client.chatCompletions(chatRequest, request.signal);
@@ -302,7 +354,15 @@ async function handleChatCompletions(
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
   const model = normalizeRequestedModel(chatRequest.model);
-  return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
+  return proxyResponse(
+    await responseWithObservedUsage(
+      upstream,
+      model,
+      recordTokens,
+      request.signal,
+      bufferProxyBodies,
+    ),
+  );
 }
 
 async function handleCompletions(
@@ -311,6 +371,7 @@ async function handleCompletions(
   recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
+  bufferProxyBodies: boolean,
 ): Promise<Response> {
   const body = await readJson(request);
   const upstream = await client.chatCompletions(
@@ -326,6 +387,12 @@ async function handleCompletions(
   // A streaming request yields chat-completion SSE; convert each chunk to the
   // legacy completions stream shape instead of calling .json() on the body.
   if (isStreamingResponse(upstream) && upstream.body) {
+    if (bufferProxyBodies) {
+      const upstreamText = await upstream.text();
+      recordResponseTextUsage(upstreamText, true, model, recordTokens);
+      const text = completionSseTextFromChatSseText(upstreamText);
+      return proxyResponse(responseFromText(upstream, text));
+    }
     return proxyResponse(
       observeResponseUsage(
         new Response(completionStreamFromChatStream(upstream.body), {
@@ -354,6 +421,7 @@ async function handleResponses(
   recordTokens: TokenRecorder,
   request: Request,
   logger: HoopilotLogger,
+  bufferProxyBodies: boolean,
 ): Promise<Response> {
   const body = await readJsonText(request);
   const upstream = await client.responses(body, request.signal);
@@ -363,7 +431,39 @@ async function handleResponses(
   }
   logUpstreamSuccess(logger, "/responses", upstream.status);
   const model = normalizeRequestedModel(asRecord(safeParseJson(body)).model);
-  return proxyResponse(observeResponseUsage(upstream, model, recordTokens, request.signal));
+  return proxyResponse(
+    await responseWithObservedUsage(
+      upstream,
+      model,
+      recordTokens,
+      request.signal,
+      bufferProxyBodies,
+    ),
+  );
+}
+
+async function responseWithObservedUsage(
+  response: Response,
+  fallbackModel: string,
+  recordTokens: TokenRecorder,
+  signal: AbortSignal,
+  bufferBody: boolean,
+): Promise<Response> {
+  const isSse = isStreamingResponse(response);
+  if (bufferBody && response.body) {
+    const text = await response.text();
+    recordResponseTextUsage(text, isSse, fallbackModel, recordTokens);
+    return responseFromText(response, text);
+  }
+  return observeResponseUsage(response, fallbackModel, recordTokens, signal);
+}
+
+function responseFromText(source: Response, text: string): Response {
+  return new Response(text, {
+    headers: source.headers,
+    status: source.status,
+    statusText: source.statusText,
+  });
 }
 
 async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<Response> {
@@ -581,18 +681,42 @@ function serverLogger(options: HoopilotServerOptions): HoopilotLogger {
   return noopLogger;
 }
 
+function resolveStreamingProxyMode(options: HoopilotServerOptions): StreamingProxyMode {
+  const value =
+    options.streamingProxyMode ??
+    envValue(options.env?.HOOPILOT_STREAM_MODE) ??
+    envValue(options.env?.HOOPILOT_STREAMING_PROXY_MODE) ??
+    "auto";
+  if (value === "auto" || value === "buffer" || value === "live") {
+    return value;
+  }
+  throw new Error(`Invalid stream mode: ${value}. Expected auto, live, or buffer.`);
+}
+
+function shouldBufferProxyBodies(mode: StreamingProxyMode): boolean {
+  if (mode === "buffer") {
+    return true;
+  }
+  if (mode === "live") {
+    return false;
+  }
+  return process.platform === "win32" && IS_STANDALONE_BINARY;
+}
+
 function finishResponse(
   response: Response,
   options: {
+    closeConnection: boolean;
     logger: HoopilotLogger;
     method: string;
     metrics: MetricsRegistry;
     requestId: string;
     route: string;
     startedAt: number;
+    trackStreamingBody: boolean;
   },
 ): Response {
-  const withRequestId = responseWithRequestId(response, options.requestId);
+  const withRequestId = responseWithRequestId(response, options.requestId, options.closeConnection);
   const stream = isStreamingResponse(withRequestId);
   const status = withRequestId.status;
   // Record metrics and log when the response is truly done. For a streamed body
@@ -605,7 +729,7 @@ function finishResponse(
     logRequestCompleted(options.logger, status, stream, durationMs);
   };
 
-  if (stream && withRequestId.body) {
+  if (stream && withRequestId.body && options.trackStreamingBody) {
     return new Response(trackStreamCompletion(withRequestId.body, complete), {
       headers: withRequestId.headers,
       status,
@@ -616,9 +740,16 @@ function finishResponse(
   return withRequestId;
 }
 
-function responseWithRequestId(response: Response, requestId: string): Response {
+function responseWithRequestId(
+  response: Response,
+  requestId: string,
+  closeConnection: boolean,
+): Response {
   const headers = new Headers(response.headers);
   headers.set("x-request-id", requestId);
+  if (closeConnection) {
+    headers.set("connection", "close");
+  }
   return new Response(response.body, {
     headers,
     status: response.status,
