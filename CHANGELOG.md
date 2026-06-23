@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.10.0 (2026-06-23)
+
+### Features
+
+- **cli:** print login token for env piping (9f2123f)
+
 ## 0.9.3 (2026-06-23)
 
 ### Other Changes
