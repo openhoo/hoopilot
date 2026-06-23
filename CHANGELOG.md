@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 0.9.1 (2026-06-23)
+
+### Bug Fixes
+
+- **release:** publish the GHCR image in its own job (2437bbf)
+
 ## 0.9.0 (2026-06-23)
 
 ### Features
