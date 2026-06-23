@@ -1,0 +1,31 @@
+services:
+  hoopilot:
+    build: .
+    image: openhoo/hoopilot:local
+    # Run as a service: restart unless explicitly stopped.
+    restart: unless-stopped
+    ports:
+      - "4141:4141"
+    environment:
+      # Required when binding a non-loopback host (HOST=0.0.0.0). Clients must
+      # send `Authorization: Bearer <key>` or `x-api-key: <key>`.
+      HOOPILOT_API_KEY: "${HOOPILOT_API_KEY:?set HOOPILOT_API_KEY in your shell or .env}"
+      # HOST/PORT/auth-file/log defaults come from the image; override here.
+      # HOOPILOT_LOG_LEVEL: info
+    volumes:
+      # Persists the GitHub Copilot OAuth credential across restarts.
+      - hoopilot-data:/data
+    healthcheck:
+      # /healthz is behind the API-key gate, so pass the key as x-api-key.
+      test:
+        - CMD
+        - bun
+        - -e
+        - "const k=process.env.HOOPILOT_API_KEY;fetch('http://127.0.0.1:4141/healthz',{headers:k?{'x-api-key':k}:{}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  hoopilot-data:

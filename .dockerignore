@@ -1,0 +1,26 @@
+# Build context hygiene: the image rebuilds dist/ and reinstalls deps, so the
+# local copies only bloat the context (and would shadow a clean install).
+node_modules
+dist
+coverage
+.git
+.github
+.githooks
+.claude
+tests
+
+# Local env / secrets — never bake these into an image.
+.env
+.env.*
+!.env.example
+
+# Editor / OS cruft and docs not needed for the build.
+*.log
+*.tsbuildinfo
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml
+CHANGELOG.md
+LICENSE
+renovate.json

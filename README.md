@@ -50,6 +50,27 @@ curl -fsSL https://raw.githubusercontent.com/openhoo/hoopilot/main/scripts/insta
 
 The standalone installer also installs a `codexx` wrapper next to `hoopilot`. Re-run the installer if `hoopilot` works but your shell does not recognize `codexx`; the installer stops the installed `hoopilot.exe` if needed and replaces the existing files in place.
 
+### Docker
+
+Run Hoopilot as a long-lived service from the published multi-arch image on the GitHub Container Registry (`linux/amd64` and `linux/arm64`):
+
+```sh
+# 1. Sign in once; the OAuth credential is written to the persisted /data volume.
+docker run --rm -it -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login
+
+# 2. Run the proxy. An API key is required because the container binds 0.0.0.0.
+docker run -d --name hoopilot --restart unless-stopped \
+  -p 4141:4141 -e HOOPILOT_API_KEY=local-key \
+  -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
+```
+
+Tags follow the release version (e.g. `ghcr.io/openhoo/hoopilot:0.8`, `:0.8.3`) plus `:latest`. The image listens on `0.0.0.0:4141`, runs as a non-root user, and stores its OAuth credential at `/data/auth.json` (override with `HOOPILOT_AUTH_FILE`). A `docker-compose.yml` is provided in the repository:
+
+```sh
+docker compose run --rm hoopilot login   # one-time GitHub OAuth
+HOOPILOT_API_KEY=local-key docker compose up -d
+```
+
 ## Update
 
 Standalone binaries update themselves in place from the latest GitHub release:
