@@ -131,31 +131,44 @@ The standalone installer also installs a `codexx` wrapper next to `hoopilot`. Re
 
 ### Docker
 
-Run Hoopilot as a long-lived service from the published multi-arch image on the GitHub Container Registry (`linux/amd64` and `linux/arm64`):
+Run Hoopilot as a long-lived service from the published multi-arch image on the GitHub Container Registry (`linux/amd64` and `linux/arm64`). The commands below are the same on Windows (PowerShell or `cmd`), macOS, and Linux — only the shell prompt differs.
+
+#### Keyless local quick start
+
+Published on loopback (`127.0.0.1`) only, the proxy is unreachable from other hosts, so no client API key is needed. Three commands — nothing to export, no keys to generate or keep in sync:
 
 ```sh
-# 1. Sign in once; the OAuth credential is written to the persisted /data volume.
+# 1. Sign in once; the OAuth credential persists in the named volume.
 docker run --rm -it -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login
 
-# 2. Run the proxy on localhost with a strong, unique API key.
-export HOOPILOT_API_KEY=$(openssl rand -hex 24)
-docker run -d --name hoopilot --restart unless-stopped \
-  -p 127.0.0.1:4141:4141 \
-  -e HOOPILOT_API_KEY \
-  -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
+# 2. Start the proxy: loopback-only, no key.
+docker run -d --name hoopilot --restart unless-stopped -p 127.0.0.1:4141:4141 -e HOOPILOT_ALLOW_UNAUTHENTICATED=1 -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
+
+# 3. Run Codex through it from any directory — no key, no setup.
+npx --package @openhoo/hoopilot codexx --yolo
+```
+
+Every line is a single command that pastes as-is into PowerShell, `cmd`, bash, or zsh. Step 3 needs the `codex` CLI on your `PATH`; `codexx` defaults to `gpt-5.5` and sends a throwaway key that the keyless proxy accepts (Bun users can swap `npx --package @openhoo/hoopilot` for `bunx`).
+
+Or, from a clone of this repo, use the bundled `docker-compose.yml` — it is keyless on loopback by default:
+
+```sh
+docker compose run --rm hoopilot login   # one-time
+docker compose up -d                      # keyless on loopback
 ```
 
 Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:1.3`, `:1.3.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
 
-Because it binds a non-loopback interface, the image fails closed: it refuses to start unless you set `HOOPILOT_API_KEY` to a strong, unique secret (well-known demo keys are rejected). Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`. To intentionally run without authentication — for example behind your own authenticating proxy — set `HOOPILOT_ALLOW_UNAUTHENTICATED=1`.
+#### Exposing the proxy beyond loopback
 
-A `docker-compose.yml` is provided. Set `HOOPILOT_API_KEY` first; compose passes it through to the container:
+The image binds `0.0.0.0` and cannot tell whether the published port is loopback-only, so it fails closed: drop the `-e HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in (or map the port to a non-loopback interface) and it refuses to start without a strong, unique `HOOPILOT_API_KEY` (well-known demo keys are rejected). Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`:
 
 ```sh
-docker compose run --rm hoopilot login
 export HOOPILOT_API_KEY=$(openssl rand -hex 24)
-docker compose up -d
+docker run -d --name hoopilot --restart unless-stopped -p 4141:4141 -e HOOPILOT_API_KEY -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
 ```
+
+With compose, a set `HOOPILOT_API_KEY` takes precedence over the keyless default: `export HOOPILOT_API_KEY=$(openssl rand -hex 24)` then `docker compose up -d`. To run unauthenticated on a non-loopback bind anyway — for example behind your own authenticating proxy — keep `HOOPILOT_ALLOW_UNAUTHENTICATED=1`. Point `codexx` at a keyed server by exporting the same `HOOPILOT_API_KEY` (or `CODEXX_API_KEY`) in its environment.
 
 ## Update
 
@@ -233,7 +246,7 @@ Without a global install:
 npx --package @openhoo/hoopilot codexx
 ```
 
-If the server requires an API key, set `HOOPILOT_API_KEY` (or `CODEXX_API_KEY`) in the `codexx` environment to match.
+With the [keyless Docker quick start](#keyless-local-quick-start), no key is involved: `codexx --yolo` works from any directory because `codexx` sends a throwaway key that the loopback-only proxy accepts. If the server *does* require an API key, set `HOOPILOT_API_KEY` (or `CODEXX_API_KEY`) in the `codexx` environment to match.
 
 `codexx` does not start Hoopilot and does not alter your shell environment. It starts `codex` with a temporary `hoopilot` model provider pointed at `http://127.0.0.1:4141/v1`, uses the Responses API wire format, disables Responses WebSockets for that provider, maps `HOOPILOT_API_KEY` (or a random throwaway key when none is set) to `OPENAI_API_KEY` for the child process, passes `--disable network_proxy`, and removes standard proxy variables from the spawned Codex process.
 

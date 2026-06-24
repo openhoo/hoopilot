@@ -7,12 +7,17 @@ services:
     ports:
       - "127.0.0.1:4141:4141"
     environment:
-      # The image binds 0.0.0.0 for Docker port publishing, so hoopilot fails
-      # closed and refuses to start without authentication. Set a strong, unique
-      # key before `docker compose up`, e.g.:
-      #   export HOOPILOT_API_KEY=$(openssl rand -hex 24)
-      # Leaving it unset makes the proxy exit on startup with a clear error.
-      # Clients then send it as `Authorization: Bearer <key>` or `x-api-key: <key>`.
+      # This file publishes the proxy on loopback only (127.0.0.1, see `ports`
+      # above), so no client API key is needed — the proxy is unreachable from
+      # other hosts. The container binds 0.0.0.0 (required for port publishing),
+      # which makes hoopilot fail closed by default, so we opt into running
+      # without a key here. This is the keyless "just works" local path:
+      #   docker compose up -d   # no key to generate, export, or sync
+      HOOPILOT_ALLOW_UNAUTHENTICATED: ${HOOPILOT_ALLOW_UNAUTHENTICATED:-1}
+      # Optional: require a client key. If you change the `ports` mapping to a
+      # non-loopback interface, set a strong, unique key here — it takes
+      # precedence and clients must send it as `Authorization: Bearer <key>` or
+      # `x-api-key: <key>`. Generate one with: openssl rand -hex 24
       HOOPILOT_API_KEY: ${HOOPILOT_API_KEY:-}
     volumes:
       # Persists the GitHub Copilot OAuth credential across restarts.
