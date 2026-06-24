@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.0 (2026-06-24)
+
+### Features
+
+- **docker:** keyless loopback quick start for compose and docker run (0833d91)
+
 ## 2.0.0 (2026-06-24)
 
 ### Other Changes
