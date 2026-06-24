@@ -1,3 +1,5 @@
+import { asRecord } from "./util";
+
 // Build-time constants. For standalone binaries these identifiers are replaced
 // at compile time via `bun build --compile --define 'HOOPILOT_VERSION="x.y.z"'`
 // (see scripts/build-binaries.sh). In dev runs and the npm package they are not
@@ -32,8 +34,9 @@ export async function getVersion(): Promise<string> {
     resolved = BAKED_VERSION;
   } else {
     try {
-      const manifest = await Bun.file(new URL("../package.json", import.meta.url)).json();
-      resolved = typeof manifest.version === "string" ? manifest.version : "0.0.0";
+      const manifest = asRecord(await Bun.file(new URL("../package.json", import.meta.url)).json());
+      const version = manifest.version;
+      resolved = typeof version === "string" ? version : "0.0.0";
     } catch {
       resolved = "0.0.0";
     }

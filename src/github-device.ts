@@ -200,9 +200,14 @@ function positiveSeconds(value: unknown, fallback: number): number {
 
 async function parseJsonResponse<T>(response: Response, context: string): Promise<T> {
   const text = await response.text();
+  let value: unknown;
   try {
-    return JSON.parse(text) as T;
+    value = JSON.parse(text);
   } catch {
     throw new Error(`${context}: ${text.slice(0, 500)}`);
   }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${context}: ${text.slice(0, 500)}`);
+  }
+  return value as T;
 }

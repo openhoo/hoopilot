@@ -1,6 +1,6 @@
 import { normalizeRequestedModel } from "./openai";
 import type { JsonObject } from "./types";
-import { asRecord } from "./util";
+import { asRecord, firstNumber, parseJsonObject, randomId, removeUndefined } from "./util";
 
 interface AnthropicStreamOptions {
   model: string;
@@ -42,7 +42,7 @@ export function anthropicMessagesToResponsesRequest(request: JsonObject): JsonOb
         : undefined,
     metadata: request.metadata,
     model: normalizeRequestedModel(request.model),
-    parallel_tool_calls: true,
+    parallel_tool_calls: asRecord(request.tool_choice).disable_parallel_tool_use !== true,
     reasoning: anthropicThinkingToReasoning(request.thinking),
     stop: anthropicStopSequences(request.stop_sequences),
     stream: request.stream === true,
@@ -688,14 +688,6 @@ function parseSseBlock(block: string): { data: string; event: string } {
   return { data: data.join("\n"), event };
 }
 
-function parseJsonObject(text: string): JsonObject | undefined {
-  try {
-    return asRecord(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
-}
-
 function parseToolInput(argumentsText: string): JsonObject {
   const parsed = parseJsonObject(argumentsText);
   return parsed ?? {};
@@ -730,27 +722,10 @@ function textValue(value: unknown): string {
   return "";
 }
 
-function firstNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
 function indexValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function removeUndefined(record: JsonObject): JsonObject {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
-}
-
 function encodeSse(event: string, data: JsonObject): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
-function randomId(): string {
-  return crypto.randomUUID().replaceAll("-", "");
 }

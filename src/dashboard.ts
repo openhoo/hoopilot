@@ -407,21 +407,24 @@ footer.foot .end { margin-left:auto; }
   function mk(tag, cls, txt){ var e = document.createElement(tag); if (cls) e.className = cls; if (txt !== undefined && txt !== null) e.textContent = txt; return e; }
 
   // Set numeric text and flash on discrete change.
-  function setNum(id, value, kind){
+  function setNum(id, value, kind, num){
     var el = byId(id); if (!el) return;
     el.classList.remove("skel");
     var s = String(value);
     if (el.textContent !== s){
       el.textContent = s;
+      // Compare on the raw number (num) when provided, so directional flash works
+      // even when value is a pre-formatted display string.
+      var n = (num !== undefined) ? num : value;
       var prev = lastRender[id];
       if (prev !== undefined){
         var cls = "flash";
-        if (kind === "delta" && typeof value === "number" && typeof prev === "number"){
-          cls = value > prev ? "flash-up" : (value < prev ? "flash-down" : null);
+        if (kind === "delta" && typeof n === "number" && typeof prev === "number"){
+          cls = n > prev ? "flash-up" : (n < prev ? "flash-down" : null);
         }
         if (cls){ el.classList.remove("flash","flash-up","flash-down"); void el.offsetWidth; el.classList.add(cls); }
       }
-      lastRender[id] = value;
+      lastRender[id] = n;
     }
   }
   function setText(id, s){ var el = byId(id); if (el){ el.classList.remove("skel"); el.textContent = s; } }
@@ -502,7 +505,7 @@ footer.foot .end { margin-left:auto; }
     if (beat && dot){ dot.classList.remove("heartbeat"); void dot.offsetWidth; dot.classList.add("heartbeat"); }
   }
   function showBanner(text, ok){
-    var b = byId("banner"); b.textContent = text; b.className = "banner show" + (ok ? " ok" : ""); b.classList.add("show");
+    var b = byId("banner"); b.textContent = text; b.className = "show" + (ok ? " ok" : "");
     if (ok){ setTimeout(function(){ b.classList.remove("show"); }, 2000); }
   }
   function hideBanner(){ byId("banner").classList.remove("show"); }
@@ -609,7 +612,7 @@ footer.foot .end { margin-left:auto; }
     if (isFinite(reqPerSec)){ pushHist(hist.req, reqPerSec); setNum("req-num", rate(reqPerSec)); } else setText("req-num","\\u2014");
     if (isFinite(tokPerSec)){ pushHist(hist.tok, tokPerSec); setNum("tok-num", humanInt(tokPerSec)); } else setText("tok-num","\\u2014");
     var inflight = proxy.inFlight || 0;
-    pushHist(hist.inflight, inflight); setNum("inflight-num", String(inflight), "delta");
+    pushHist(hist.inflight, inflight); setNum("inflight-num", String(inflight), "delta", inflight);
     byId("v-inflight").classList.toggle("active", inflight > 0);
     setText("uptime-num", fmtUptime(proxy.uptimeSeconds || 0));
 
@@ -752,7 +755,7 @@ footer.foot .end { margin-left:auto; }
 
   function renderUpstream(up, delta, restarted){
     setNum("up-total", humanInt(up.total||0));
-    setNum("up-errors", humanInt(up.errors||0), "delta");
+    setNum("up-errors", humanInt(up.errors||0), "delta", up.errors||0);
     var er = up.total ? (up.errors/up.total*100) : 0;
     var rt = byId("up-rate"); rt.textContent = pct(er); rt.className = "v rate " + (er > 5 ? "danger" : er > 1 ? "warn" : "ok");
     byId("up-errblk").classList.toggle("hot", (up.errors||0) > 0);

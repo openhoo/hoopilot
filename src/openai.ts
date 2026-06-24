@@ -1,5 +1,12 @@
 import type { JsonObject, TokenUsage } from "./types";
-import { asRecord } from "./util";
+import {
+  asRecord,
+  firstNumber,
+  parseJsonObject,
+  randomId,
+  removeUndefined,
+  safeJsonParse,
+} from "./util";
 
 export const DEFAULT_MODEL = "gpt-4.1";
 
@@ -11,10 +18,10 @@ interface ResponseStreamOptions {
 interface AccumulatedToolCall {
   arguments: string;
   id: string;
-  index: number;
-  itemId?: string;
+  index?: number;
+  itemId: string;
   name: string;
-  outputIndex?: number;
+  outputIndex: number;
 }
 
 export class OpenAICompatibilityError extends Error {
@@ -166,14 +173,6 @@ function compactionOutputFromResponsesSse(text: string): JsonObject[] {
     return completedOutput;
   }
   return deltas ? [messageOutputItem(deltas)] : [];
-}
-
-function safeJsonParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
 }
 
 export function chatCompletionToCompletion(completion: JsonObject): JsonObject {
@@ -390,7 +389,7 @@ export function responsesStreamFromChatStream(
         if (isNew) {
           enqueue("response.output_item.added", {
             item: functionCallItem(existing, "in_progress"),
-            output_index: existing.outputIndex ?? 0,
+            output_index: existing.outputIndex,
             type: "response.output_item.added",
           });
         }
@@ -401,7 +400,7 @@ export function responsesStreamFromChatStream(
           enqueue("response.function_call_arguments.delta", {
             delta: argumentDelta,
             item_id: existing.itemId,
-            output_index: existing.outputIndex ?? 0,
+            output_index: existing.outputIndex,
             type: "response.function_call_arguments.delta",
           });
         }
@@ -456,11 +455,9 @@ export function responsesStreamFromChatStream(
           });
         }
 
-        for (const tool of [...tools.values()].sort(
-          (a, b) => (a.outputIndex ?? 0) - (b.outputIndex ?? 0),
-        )) {
+        for (const tool of [...tools.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
           const item = functionCallItem(tool);
-          const outputIndex = tool.outputIndex ?? 0;
+          const outputIndex = tool.outputIndex;
           outputEntries.push([outputIndex, item]);
           enqueue("response.function_call_arguments.done", {
             arguments: tool.arguments,
@@ -496,7 +493,7 @@ export function responsesStreamFromChatStream(
   });
 }
 
-function inputToMessages(input: unknown): unknown[] {
+function inputToMessages(input: unknown): JsonObject[] {
   if (typeof input === "string") {
     return [{ content: input, role: "user" }];
   }
@@ -504,7 +501,7 @@ function inputToMessages(input: unknown): unknown[] {
     return [];
   }
 
-  const messages: unknown[] = [];
+  const messages: JsonObject[] = [];
   for (const item of input) {
     const record = asRecord(item);
     const type = contentToText(record.type);
@@ -674,7 +671,7 @@ function responsesRoleToChatRole(role: string): string | undefined {
   unsupportedResponsesFeature(`message role "${role}"`);
 }
 
-function chatTools(tools: unknown): unknown[] | undefined {
+function chatTools(tools: unknown): JsonObject[] | undefined {
   if (!Array.isArray(tools)) {
     return undefined;
   }
@@ -729,7 +726,6 @@ function outputItemsFromMessage(message: Record<string, unknown>): JsonObject[] 
       functionCallItem({
         arguments: contentToText(fn.arguments),
         id: contentToText(record.id) || `call_${randomId()}`,
-        index: output.length,
         name: contentToText(fn.name),
       }),
     );
@@ -754,7 +750,7 @@ function messageOutputItem(text: string, id = `msg_${randomId()}`): JsonObject {
 }
 
 function functionCallItem(
-  tool: AccumulatedToolCall,
+  tool: { arguments: string; id: string; itemId?: string; name: string },
   status: "in_progress" | "completed" = "completed",
 ): JsonObject {
   return {
@@ -835,22 +831,18 @@ export function extractTokenUsage(usage: unknown): TokenUsage | undefined {
     asRecord(record.prompt_tokens_details).cached_tokens,
     asRecord(record.input_tokens_details).cached_tokens,
   );
-  return removeUndefined({
-    cachedTokens: cached,
+  const result: TokenUsage = {
     completionTokens,
     promptTokens,
-    reasoningTokens: reasoning,
     totalTokens: total ?? promptTokens + completionTokens,
-  }) as unknown as TokenUsage;
-}
-
-function firstNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
+  };
+  if (cached !== undefined) {
+    result.cachedTokens = cached;
   }
-  return undefined;
+  if (reasoning !== undefined) {
+    result.reasoningTokens = reasoning;
+  }
+  return result;
 }
 
 function firstChoice(completion: JsonObject): Record<string, unknown> {
@@ -887,7 +879,7 @@ function processCompletionSseBlock(
     return;
   }
 
-  const parsed = parseJson(data);
+  const parsed = parseJsonObject(data);
   if (!parsed) {
     return;
   }
@@ -969,7 +961,7 @@ function processChatSseLine(
     return;
   }
 
-  const parsed = parseJson(data);
+  const parsed = parseJsonObject(data);
   if (!parsed) {
     return;
   }
@@ -1025,22 +1017,6 @@ function encodeDataSse(data: JsonObject | "[DONE]"): string {
     return "data: [DONE]\n\n";
   }
   return `data: ${JSON.stringify(data)}\n\n`;
-}
-
-function parseJson(data: string): JsonObject | undefined {
-  try {
-    return asRecord(JSON.parse(data));
-  } catch {
-    return undefined;
-  }
-}
-
-function removeUndefined(record: JsonObject): JsonObject {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
-}
-
-function randomId(): string {
-  return crypto.randomUUID().replaceAll("-", "");
 }
 
 function epochSeconds(): number {

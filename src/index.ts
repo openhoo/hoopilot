@@ -5,7 +5,7 @@ export {
   responsesResponseToAnthropicMessage,
   responsesStreamToAnthropicStream,
 } from "./anthropic";
-export { CopilotAuth, CopilotAuthError } from "./auth";
+export { CopilotAuth, CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 export { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "./auth-store";
 export {
   applyCopilotHeaders,
@@ -29,6 +29,7 @@ export {
   MetricsRegistry,
   observeResponseUsage,
   PROMETHEUS_CONTENT_TYPE,
+  recordResponseTextUsage,
 } from "./metrics";
 export {
   chatCompletionToCompletion,
@@ -41,6 +42,7 @@ export {
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  OpenAICompatibilityError,
   responsesCompactionResult,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
@@ -58,6 +60,7 @@ export type {
   HoopilotLoggerOptions,
   HoopilotServerOptions,
   JsonObject,
+  LatencySnapshot,
   LogFields,
   LogFormat,
   Logger,
@@ -66,6 +69,9 @@ export type {
   MetricsSnapshot,
   ModelTokenTotals,
   RequestObservation,
+  RouteLatency,
   StartedHoopilotServer,
+  StreamingProxyMode,
   TokenUsage,
+  UsageResponseBody,
 } from "./types";

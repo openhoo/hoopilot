@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   AnthropicCompatibilityError,
   anthropicMessagesToResponsesRequest,
@@ -38,8 +39,16 @@ import type {
   StartedHoopilotServer,
   StreamingProxyMode,
   TokenUsage,
+  UsageResponseBody,
 } from "./types";
-import { asRecord, envValue } from "./util";
+import {
+  asRecord,
+  envValue,
+  errorMessage,
+  isLoopbackHostname,
+  parseStreamingProxyMode,
+  safeJsonParse,
+} from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -143,89 +152,85 @@ export function createHoopilotHandler(
     }
 
     try {
-      if (request.method === "GET" && (apiPath === "/" || apiPath === "/healthz")) {
-        return finish(jsonResponse({ name: "hoopilot", object: "health", status: "ok" }));
+      // `route` is the canonical name routeFor() derived from API_ROUTES, so the
+      // dispatch keys off it rather than re-enumerating the (method, path) table.
+      switch (route) {
+        case "health":
+          return finish(jsonResponse({ name: "hoopilot", object: "health", status: "ok" }));
+        case "metrics":
+          return finish(metricsResponse(metrics));
+        case "usage":
+          return finish(await handleUsage(metrics, readUsage, request.signal));
+        case "responses_websocket":
+          return finish(websocketUnsupportedResponse());
+        case "models":
+          return finish(await handleModels(client, metrics, request.signal, requestLogger));
+        case "anthropic_messages":
+          return finish(
+            await handleAnthropicMessages(
+              client,
+              metrics,
+              recordTokens,
+              recordExtraction,
+              request,
+              requestLogger,
+              bufferProxyBodies,
+            ),
+          );
+        case "anthropic_count_tokens":
+          return finish(handleAnthropicCountTokens(await readJson(request)));
+        case "chat_completions":
+          return finish(
+            await handleChatCompletions(
+              client,
+              metrics,
+              recordTokens,
+              recordExtraction,
+              request,
+              requestLogger,
+              bufferProxyBodies,
+            ),
+          );
+        case "completions":
+          return finish(
+            await handleCompletions(
+              client,
+              metrics,
+              recordTokens,
+              recordExtraction,
+              request,
+              requestLogger,
+              bufferProxyBodies,
+            ),
+          );
+        case "responses_compact":
+          return finish(
+            await handleResponsesCompact(
+              client,
+              metrics,
+              recordTokens,
+              recordExtraction,
+              request,
+              requestLogger,
+            ),
+          );
+        case "responses":
+          return finish(
+            await handleResponses(
+              client,
+              metrics,
+              recordTokens,
+              recordExtraction,
+              request,
+              requestLogger,
+              bufferProxyBodies,
+            ),
+          );
+        default:
+          return finish(
+            jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`),
+          );
       }
-      if (request.method === "GET" && apiPath === "/metrics") {
-        return finish(metricsResponse(metrics));
-      }
-      if (request.method === "GET" && apiPath === "/v1/usage") {
-        return finish(await handleUsage(metrics, readUsage, request.signal));
-      }
-      if (request.method === "GET" && apiPath === "/v1/responses") {
-        return finish(websocketUnsupportedResponse());
-      }
-      if (request.method === "GET" && apiPath === "/v1/models") {
-        return finish(await handleModels(client, metrics, request.signal, requestLogger));
-      }
-      if (request.method === "POST" && apiPath === "/v1/messages") {
-        return finish(
-          await handleAnthropicMessages(
-            client,
-            metrics,
-            recordTokens,
-            recordExtraction,
-            request,
-            requestLogger,
-            bufferProxyBodies,
-          ),
-        );
-      }
-      if (request.method === "POST" && apiPath === "/v1/messages/count_tokens") {
-        return finish(handleAnthropicCountTokens(await readJson(request)));
-      }
-      if (request.method === "POST" && apiPath === "/v1/chat/completions") {
-        return finish(
-          await handleChatCompletions(
-            client,
-            metrics,
-            recordTokens,
-            recordExtraction,
-            request,
-            requestLogger,
-            bufferProxyBodies,
-          ),
-        );
-      }
-      if (request.method === "POST" && apiPath === "/v1/completions") {
-        return finish(
-          await handleCompletions(
-            client,
-            metrics,
-            recordTokens,
-            recordExtraction,
-            request,
-            requestLogger,
-            bufferProxyBodies,
-          ),
-        );
-      }
-      if (request.method === "POST" && apiPath === "/v1/responses/compact") {
-        return finish(
-          await handleResponsesCompact(
-            client,
-            metrics,
-            recordTokens,
-            recordExtraction,
-            request,
-            requestLogger,
-          ),
-        );
-      }
-      if (request.method === "POST" && apiPath === "/v1/responses") {
-        return finish(
-          await handleResponses(
-            client,
-            metrics,
-            recordTokens,
-            recordExtraction,
-            request,
-            requestLogger,
-            bufferProxyBodies,
-          ),
-        );
-      }
-      return finish(jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`));
     } catch (error) {
       if (error instanceof CopilotAuthError) {
         requestLogger.warn(
@@ -481,14 +486,14 @@ async function handleResponses(
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
 ): Promise<Response> {
-  const body = await readJsonText(request);
+  const { json, text: body } = await readJsonText(request);
   const upstream = await client.responses(body, request.signal);
   metrics.recordUpstream("/responses", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
   }
   logUpstreamSuccess(logger, "/responses", upstream.status);
-  const model = normalizeRequestedModel(asRecord(safeParseJson(body)).model);
+  const model = normalizeRequestedModel(json.model);
   return proxyResponse(
     await responseWithObservedUsage(
       upstream,
@@ -614,10 +619,9 @@ function parseJsonObject(text: string): JsonObject {
   return parsed as JsonObject;
 }
 
-async function readJsonText(request: Request): Promise<string> {
+async function readJsonText(request: Request): Promise<{ json: JsonObject; text: string }> {
   const text = await readRequestText(request);
-  parseJsonObject(text);
-  return text;
+  return { json: parseJsonObject(text), text };
 }
 
 async function readRequestText(request: Request): Promise<string> {
@@ -656,7 +660,7 @@ async function readRequestText(request: Request): Promise<string> {
   }
 }
 
-function jsonResponse(body: JsonObject, status = 200): Response {
+function jsonResponse(body: object, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: {
       ...corsHeaders(),
@@ -680,7 +684,7 @@ function jsonError(status: number, code: string, message: string): Response {
 }
 
 function upstreamErrorResponse(status: number, text: string): Response {
-  const parsedError = asRecord(asRecord(safeParseJson(text)).error);
+  const parsedError = asRecord(asRecord(safeJsonParse(text)).error);
   if (Object.keys(parsedError).length > 0) {
     return jsonResponse({ error: parsedError }, status);
   }
@@ -710,13 +714,24 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
+// Compare two secrets in constant time. Both sides are hashed to a fixed-width
+// digest first so neither the key length nor a prefix match leaks via timing.
+function secretEquals(candidate: string, secret: string): boolean {
+  const a = createHash("sha256").update(candidate).digest();
+  const b = createHash("sha256").update(secret).digest();
+  return timingSafeEqual(a, b);
+}
+
 function isAuthorized(request: Request, apiKey: string | undefined): boolean {
   if (!apiKey) {
     return true;
   }
   const authorization = request.headers.get("authorization") ?? "";
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
-  return bearer === apiKey || request.headers.get("x-api-key") === apiKey;
+  return (
+    (bearer !== undefined && secretEquals(bearer, apiKey)) ||
+    secretEquals(request.headers.get("x-api-key") ?? "", apiKey)
+  );
 }
 
 // Block cross-origin browser requests regardless of whether an API key is set.
@@ -784,7 +799,7 @@ function upstreamAuthMessage(message: string): string {
 }
 
 function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  return isLoopbackHostname(host);
 }
 
 function urlHost(host: string): string {
@@ -807,10 +822,6 @@ function normalizeServerPort(value: number | string): number {
   return port;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function serverLogger(options: HoopilotServerOptions): HoopilotLogger {
   if (options.logger) {
     return options.logger.child({ component: "server" });
@@ -831,10 +842,7 @@ function resolveStreamingProxyMode(options: HoopilotServerOptions): StreamingPro
     envValue(options.env?.HOOPILOT_STREAM_MODE) ??
     envValue(options.env?.HOOPILOT_STREAMING_PROXY_MODE) ??
     "auto";
-  if (value === "auto" || value === "buffer" || value === "live") {
-    return value;
-  }
-  throw new Error(`Invalid stream mode: ${value}. Expected auto, live, or buffer.`);
+  return parseStreamingProxyMode(value);
 }
 
 function shouldBufferProxyBodies(mode: StreamingProxyMode): boolean {
@@ -927,11 +935,15 @@ function trackStreamCompletion(
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   let fired = false;
-  const fire = (): void => {
-    if (!fired) {
-      fired = true;
-      onComplete();
+  // Release the source reader's lock on every terminal path so it is never
+  // leaked. Idempotent: the first terminal branch wins.
+  const release = (): void => {
+    if (fired) {
+      return;
     }
+    fired = true;
+    onComplete();
+    reader.releaseLock();
   };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -939,18 +951,27 @@ function trackStreamCompletion(
         const { done, value } = await reader.read();
         if (done) {
           controller.close();
-          fire();
+          release();
           return;
         }
         controller.enqueue(value);
       } catch (error) {
-        fire();
+        release();
         controller.error(error);
       }
     },
-    cancel(reason) {
-      fire();
-      return reader.cancel(reason);
+    async cancel(reason) {
+      if (!fired) {
+        fired = true;
+        onComplete();
+      }
+      // The lock must be released after the cancel settles, not before, so a
+      // pending read is not orphaned mid-cancel.
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
     },
   });
 }
@@ -1007,47 +1028,33 @@ function canonicalApiPath(path: string): string {
   }
 }
 
+// Single source of truth mapping (method, path) to a stable route name. Both the
+// request dispatch (switch on `route`) and routeFor() derive from this table, so
+// adding or renaming a route only touches one list. Names double as metrics and
+// log labels, so they must stay stable.
+const API_ROUTES: ReadonlyArray<{ method: string; path: string; name: string }> = [
+  { method: "GET", path: "/", name: "health" },
+  { method: "GET", path: "/healthz", name: "health" },
+  { method: "GET", path: "/dashboard", name: "dashboard" },
+  { method: "GET", path: "/metrics", name: "metrics" },
+  { method: "GET", path: "/v1/usage", name: "usage" },
+  { method: "GET", path: "/v1/models", name: "models" },
+  { method: "GET", path: "/v1/responses", name: "responses_websocket" },
+  { method: "POST", path: "/v1/messages", name: "anthropic_messages" },
+  { method: "POST", path: "/v1/messages/count_tokens", name: "anthropic_count_tokens" },
+  { method: "POST", path: "/v1/chat/completions", name: "chat_completions" },
+  { method: "POST", path: "/v1/completions", name: "completions" },
+  { method: "POST", path: "/v1/responses/compact", name: "responses_compact" },
+  { method: "POST", path: "/v1/responses", name: "responses" },
+];
+
 function routeFor(method: string, path: string): string {
   if (method === "OPTIONS") {
     return "cors.preflight";
   }
-  if (method === "GET" && (path === "/" || path === "/healthz")) {
-    return "health";
-  }
-  if (method === "GET" && path === "/dashboard") {
-    return "dashboard";
-  }
-  if (method === "GET" && path === "/metrics") {
-    return "metrics";
-  }
-  if (method === "GET" && path === "/v1/usage") {
-    return "usage";
-  }
-  if (method === "GET" && path === "/v1/models") {
-    return "models";
-  }
-  if (method === "POST" && path === "/v1/messages") {
-    return "anthropic_messages";
-  }
-  if (method === "POST" && path === "/v1/messages/count_tokens") {
-    return "anthropic_count_tokens";
-  }
-  if (method === "POST" && path === "/v1/chat/completions") {
-    return "chat_completions";
-  }
-  if (method === "POST" && path === "/v1/completions") {
-    return "completions";
-  }
-  if (method === "POST" && path === "/v1/responses/compact") {
-    return "responses_compact";
-  }
-  if (method === "POST" && path === "/v1/responses") {
-    return "responses";
-  }
-  if (method === "GET" && path === "/v1/responses") {
-    return "responses_websocket";
-  }
-  return "not_found";
+  return (
+    API_ROUTES.find((entry) => entry.method === method && entry.path === path)?.name ?? "not_found"
+  );
 }
 
 function isStreamingResponse(response: Response): boolean {
@@ -1104,7 +1111,7 @@ async function handleUsage(
 ): Promise<Response> {
   const { copilot, error } = await readUsage(signal);
   const proxy = metrics.snapshot();
-  const body: JsonObject = {
+  const body: UsageResponseBody = {
     copilot: copilot ?? null,
     object: "usage",
     proxy,
@@ -1156,12 +1163,4 @@ export function createUsageReader(
       return { error: errorMessage(error) };
     }
   };
-}
-
-function safeParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
 }

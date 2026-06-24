@@ -2,10 +2,11 @@
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
+import { CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL, STORED_TOKEN_TTL_MS } from "./auth";
 import { authStorePath, writeStoredCopilotAuth } from "./auth-store";
 import { main as codexxMain } from "./codexx";
 import {
+  ALLOWED_COPILOT_API_HOSTS,
   applyCopilotHeaders,
   CopilotClient,
   normalizeCopilotUsage,
@@ -30,9 +31,11 @@ import type {
 } from "./types";
 import { cleanupOldBinary, maybeNotifyUpdate, runUpdate } from "./update";
 import {
-  asRecord,
   envValue,
+  errorMessage,
   isTrustedTokenBaseUrl,
+  modelIdsFromResponse,
+  parseStreamingProxyMode,
   trimTrailingSlash,
   truncatedResponseText,
 } from "./util";
@@ -59,8 +62,6 @@ interface VerifyCopilotOAuthTokenOptions {
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
 }
-
-const ALLOWED_COPILOT_API_HOSTS = ["api.githubcopilot.com"] as const;
 
 export async function main(argv = Bun.argv.slice(2)): Promise<void> {
   // Clear any leftover ".old" binary from a prior Windows self-update.
@@ -208,7 +209,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         args.logLevel = parseLogLevel(optionValue(name, inlineValue, rest));
         break;
       case "--stream-mode":
-        args.streamingProxyMode = parseStreamMode(optionValue(name, inlineValue, rest));
+        args.streamingProxyMode = parseStreamingProxyMode(optionValue(name, inlineValue, rest));
         break;
       case "--host":
         args.host = optionValue(name, inlineValue, rest);
@@ -228,13 +229,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return args;
-}
-
-function parseStreamMode(value: string): "auto" | "buffer" | "live" {
-  if (value === "auto" || value === "buffer" || value === "live") {
-    return value;
-  }
-  throw new Error(`Invalid stream mode: ${value}. Expected auto, live, or buffer.`);
 }
 
 function optionValue(name: string, inlineValue: string | undefined, rest: string[]): string {
@@ -303,13 +297,7 @@ export async function runModels(options: HoopilotServerOptions = {}): Promise<st
 
   const response = await new CopilotClient(options).models();
   if (!response.ok) {
-    const message = `GitHub Copilot API model list failed with ${
-      response.status
-    }: ${await truncatedResponseText(response)}`;
-    if (response.status === 401 || response.status === 403) {
-      throw new CopilotAuthError(message);
-    }
-    throw new Error(message);
+    await throwForCopilotResponse(response, "GitHub Copilot API model list");
   }
 
   const ids = modelIdsFromResponse(await response.json().catch(() => undefined));
@@ -333,13 +321,7 @@ export async function runUsage(options: HoopilotServerOptions = {}): Promise<Cop
 
   const response = await new CopilotClient(options).usage();
   if (!response.ok) {
-    const message = `GitHub Copilot usage request failed with ${
-      response.status
-    }: ${await truncatedResponseText(response)}`;
-    if (response.status === 401 || response.status === 403) {
-      throw new CopilotAuthError(message);
-    }
-    throw new Error(message);
+    await throwForCopilotResponse(response, "GitHub Copilot usage request");
   }
 
   const rateLimit = parseRateLimitHeaders(response.headers);
@@ -466,21 +448,24 @@ export async function verifyCopilotOAuthToken(
   });
 
   if (!response.ok) {
-    const message = `GitHub Copilot API verification failed with ${
-      response.status
-    }: ${await truncatedResponseText(response)}`;
-    if (response.status === 401 || response.status === 403) {
-      throw new CopilotAuthError(message);
-    }
-    throw new Error(message);
+    await throwForCopilotResponse(response, "GitHub Copilot API verification");
   }
 
   return {
     apiBaseUrl,
-    expiresAtMs: Date.now() + 10 * 60_000,
+    expiresAtMs: Date.now() + STORED_TOKEN_TTL_MS,
     source: "github-copilot-oauth",
     token,
   };
+}
+
+/** Throw a labeled error for a failed Copilot response, mapping 401/403 to {@link CopilotAuthError}. */
+async function throwForCopilotResponse(response: Response, label: string): Promise<never> {
+  const message = `${label} failed with ${response.status}: ${await truncatedResponseText(response)}`;
+  if (response.status === 401 || response.status === 403) {
+    throw new CopilotAuthError(message);
+  }
+  throw new Error(message);
 }
 
 type BrowserOpenerChild = {
@@ -513,22 +498,6 @@ export function openBrowserBestEffort(url: string, spawnOpener: BrowserOpenerSpa
   } catch {
     // The device login code and URL were already printed.
   }
-}
-
-function modelIdsFromResponse(body: unknown): string[] {
-  const record = asRecord(body);
-  const data = Array.isArray(record.data) ? record.data : Array.isArray(body) ? body : [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const model of data) {
-    const id = asRecord(model).id;
-    if (typeof id !== "string" || id.length === 0 || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
 }
 
 function withRuntimeEnv(args: ParsedArgs): ParsedArgs {
@@ -622,7 +591,7 @@ Environment:
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(errorMessage(error));
     process.exit(1);
   });
 }

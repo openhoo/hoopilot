@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { envValue } from "./util";
+import { asRecord, envValue } from "./util";
 
 export class StoredCopilotAuthError extends Error {
   constructor(message: string) {
@@ -64,7 +64,7 @@ export function readStoredCopilotAuth(path = authStorePath()): StoredCopilotAuth
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new StoredCopilotAuthError(`Hoopilot auth file at ${path} must contain a JSON object.`);
   }
-  const record = parsed as Record<string, unknown>;
+  const record = asRecord(parsed);
   const token = typeof record.token === "string" ? record.token.trim() : "";
   if (!token) {
     throw new StoredCopilotAuthError(`Hoopilot auth file at ${path} does not contain a token.`);
@@ -92,7 +92,17 @@ export function writeStoredCopilotAuth(auth: StoredCopilotAuth, path = authStore
   // disk mid-write can never leave a truncated credential file behind.
   const tmpPath = `${path}.${process.pid}.tmp`;
   writeFileSync(tmpPath, data, { mode: 0o600 });
-  renameSync(tmpPath, path);
+  try {
+    renameSync(tmpPath, path);
+  } catch (error) {
+    // Don't leave the orphaned temp credential behind if the rename fails.
+    try {
+      rmSync(tmpPath, { force: true });
+    } catch {
+      // best-effort cleanup; surface the original failure below
+    }
+    throw error;
+  }
   try {
     chmodSync(path, 0o600);
   } catch {

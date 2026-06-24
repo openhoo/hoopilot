@@ -8,7 +8,7 @@ import { envValue, trimTrailingSlash } from "./util";
 
 export const DEFAULT_COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 const REFRESH_SKEW_MS = 60_000;
-const STORED_TOKEN_TTL_MS = 10 * 60_000;
+export const STORED_TOKEN_TTL_MS = 10 * 60_000;
 
 export class CopilotAuthError extends Error {
   constructor(message: string) {
@@ -48,7 +48,7 @@ export class CopilotAuth {
       throw error;
     }
     if (stored) {
-      return this.#cacheAccess({
+      this.#cachedAccess = {
         apiBaseUrl: trimTrailingSlash(
           this.#hasCopilotApiBaseUrlOverride
             ? this.#copilotApiBaseUrl
@@ -57,16 +57,12 @@ export class CopilotAuth {
         expiresAtMs: Date.now() + STORED_TOKEN_TTL_MS,
         source: "github-copilot-oauth",
         token: stored.token,
-      });
+      };
+      return this.#cachedAccess;
     }
 
     throw new CopilotAuthError(
       "No GitHub Copilot OAuth credential found. Run `hoopilot login` to sign in through your browser.",
     );
-  }
-
-  #cacheAccess(access: CopilotAccess): CopilotAccess {
-    this.#cachedAccess = access;
-    return access;
   }
 }

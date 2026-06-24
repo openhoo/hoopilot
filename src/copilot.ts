@@ -7,11 +7,18 @@ import type {
   GithubRateLimit,
   JsonObject,
 } from "./types";
-import { asRecord, envValue, isTrustedTokenBaseUrl, trimTrailingSlash } from "./util";
+import {
+  asRecord,
+  envValue,
+  firstNumber,
+  isTrustedTokenBaseUrl,
+  removeUndefined,
+  trimTrailingSlash,
+} from "./util";
 
 /** Default GitHub REST host that serves the `copilot_internal/user` quota route. */
 export const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
-const ALLOWED_COPILOT_API_HOSTS = ["api.githubcopilot.com"] as const;
+export const ALLOWED_COPILOT_API_HOSTS = ["api.githubcopilot.com"] as const;
 const ALLOWED_GITHUB_API_HOSTS = ["api.github.com"] as const;
 
 /**
@@ -20,6 +27,12 @@ const ALLOWED_GITHUB_API_HOSTS = ["api.github.com"] as const;
  * `2026-06-01`), so it is pinned separately and bumped independently.
  */
 export const COPILOT_USAGE_API_VERSION = "2025-04-01";
+
+// Editor-identity strings spoofed to GitHub Copilot. Deliberately pinned (not
+// derived from the package version) and shared by both header builders below.
+const EDITOR_PLUGIN_VERSION = "hoopilot/0.1.0";
+const EDITOR_VERSION = "Hoopilot/0.1.0";
+const HOOPILOT_USER_AGENT = "hoopilot/0.1.0";
 
 /**
  * Set the GitHub Copilot API request headers on `headers`, leaving any
@@ -31,10 +44,10 @@ export function applyCopilotHeaders(headers: Headers, token: string): Headers {
   headers.set("accept", headers.get("accept") ?? "application/json");
   headers.set("authorization", `Bearer ${token}`);
   headers.set("copilot-integration-id", "vscode-chat");
-  headers.set("editor-plugin-version", "hoopilot/0.1.0");
-  headers.set("editor-version", "Hoopilot/0.1.0");
+  headers.set("editor-plugin-version", EDITOR_PLUGIN_VERSION);
+  headers.set("editor-version", EDITOR_VERSION);
   headers.set("openai-intent", "conversation-panel");
-  headers.set("user-agent", "hoopilot/0.1.0");
+  headers.set("user-agent", HOOPILOT_USER_AGENT);
   headers.set("x-github-api-version", "2026-06-01");
   return headers;
 }
@@ -48,9 +61,9 @@ export function applyCopilotHeaders(headers: Headers, token: string): Headers {
 export function applyGithubApiHeaders(headers: Headers, token: string): Headers {
   headers.set("accept", headers.get("accept") ?? "application/json");
   headers.set("authorization", `token ${token}`);
-  headers.set("editor-plugin-version", "hoopilot/0.1.0");
-  headers.set("editor-version", "Hoopilot/0.1.0");
-  headers.set("user-agent", "hoopilot/0.1.0");
+  headers.set("editor-plugin-version", EDITOR_PLUGIN_VERSION);
+  headers.set("editor-version", EDITOR_VERSION);
+  headers.set("user-agent", HOOPILOT_USER_AGENT);
   headers.set("x-github-api-version", COPILOT_USAGE_API_VERSION);
   return headers;
 }
@@ -81,7 +94,7 @@ export function parseRateLimitHeaders(
   ) {
     return undefined;
   }
-  return removeUndefinedRateLimit({
+  return removeUndefined({
     limit,
     observedAtMs: nowMs,
     remaining,
@@ -102,12 +115,6 @@ function headerInt(headers: Headers, name: string): number | undefined {
   }
   const value = Number.parseInt(raw.trim(), 10);
   return Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function removeUndefinedRateLimit(rateLimit: GithubRateLimit): GithubRateLimit {
-  return Object.fromEntries(
-    Object.entries(rateLimit).filter(([, value]) => value !== undefined),
-  ) as unknown as GithubRateLimit;
 }
 
 export class CopilotClient {
@@ -232,7 +239,7 @@ export function normalizeCopilotUsage(body: unknown): CopilotUsage {
     for (const category of new Set([...Object.keys(remaining), ...Object.keys(monthly)])) {
       const entitlement = numberOrUndefined(monthly[category]);
       const left = numberOrUndefined(remaining[category]);
-      quotas[category] = removeUndefinedQuota({
+      quotas[category] = removeUndefined({
         entitlement,
         percentRemaining:
           entitlement !== undefined && entitlement > 0 && left !== undefined
@@ -244,7 +251,7 @@ export function normalizeCopilotUsage(body: unknown): CopilotUsage {
     }
   }
 
-  return removeUndefinedUsage({
+  return removeUndefined({
     accessTypeSku: stringOrUndefined(record.access_type_sku),
     chatEnabled: typeof record.chat_enabled === "boolean" ? record.chat_enabled : undefined,
     plan: stringOrUndefined(record.copilot_plan),
@@ -261,7 +268,7 @@ function normalizeQuotaDetail(detail: JsonObject): CopilotQuota {
   const overageCount = numberOrUndefined(detail.overage_count);
   const remaining =
     numberOrUndefined(detail.remaining) ?? numberOrUndefined(detail.quota_remaining);
-  return removeUndefinedQuota({
+  return removeUndefined({
     entitlement,
     hasQuota: typeof detail.has_quota === "boolean" ? detail.has_quota : undefined,
     overageCount,
@@ -293,21 +300,9 @@ function usedFrom(
   return Math.max(0, base + overage);
 }
 
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
+// Single-argument case of the shared firstNumber helper.
+const numberOrUndefined = firstNumber;
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function removeUndefinedQuota(quota: CopilotQuota): CopilotQuota {
-  return Object.fromEntries(
-    Object.entries(quota).filter(([, value]) => value !== undefined),
-  ) as CopilotQuota;
-}
-
-function removeUndefinedUsage(usage: CopilotUsage): CopilotUsage {
-  const entries = Object.entries(usage).filter(([, value]) => value !== undefined);
-  return Object.fromEntries(entries) as unknown as CopilotUsage;
 }

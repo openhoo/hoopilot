@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CopilotAuth } from "../src/auth";
@@ -126,6 +126,17 @@ describe("authStorePath", () => {
     expect(() => readStoredCopilotAuth(authStorePath({}))).toThrow(
       "Cannot resolve Hoopilot auth file path",
     );
+  });
+});
+
+describe("writeStoredCopilotAuth", () => {
+  it("removes the orphaned temp file when the atomic rename fails", () => {
+    // Use an existing directory as the destination so renameSync(file, dir) fails,
+    // then assert the sibling temp credential is cleaned up rather than leaked.
+    const dir = mkdtempSync(join(tmpdir(), "hoopilot-auth-rename-"));
+    const tmpPath = `${dir}.${process.pid}.tmp`;
+    expect(() => writeStoredCopilotAuth({ token: "oauth-token" }, dir)).toThrow();
+    expect(existsSync(tmpPath)).toBe(false);
   });
 });
 

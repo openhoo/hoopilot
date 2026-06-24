@@ -36,9 +36,13 @@ import {
   type UpdateState,
   upgradeCommandFor,
 } from "./update-core";
+import { errorMessage } from "./util";
 import { BAKED_TARGET, IS_STANDALONE_BINARY } from "./version";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+// Binary and checksum downloads share one generous timeout, distinct from the
+// short metadata-request timeout that uses REQUEST_TIMEOUT_MS directly.
+const DOWNLOAD_TIMEOUT_MS = REQUEST_TIMEOUT_MS * 10;
 const SHA256SUMS = "SHA256SUMS";
 
 function userAgent(version: string): string {
@@ -210,12 +214,13 @@ async function downloadToFile(url: string, dest: string, version: string): Promi
   const response = await fetch(url, {
     headers: { "User-Agent": userAgent(version) },
     redirect: "follow",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 10),
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
   });
   if (!response.ok || !response.body) {
     throw new Error(`Download failed (${response.status}) for ${url}`);
   }
-  await writeFile(dest, new Uint8Array(await response.arrayBuffer()));
+  // Stream the body straight to disk instead of buffering the whole binary.
+  await Bun.write(dest, response);
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -240,7 +245,7 @@ async function verifyChecksum(
   const response = await fetch(sums.url, {
     headers: { "User-Agent": userAgent(version) },
     redirect: "follow",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`Could not download ${SHA256SUMS} (${response.status}).`);
@@ -416,8 +421,4 @@ export async function runUpdate(currentVersion: string, logger?: HoopilotLogger)
   if (process.platform === "win32") {
     console.log("Restart hoopilot to run the new version.");
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -32,8 +32,10 @@ export interface HoopilotLoggerOptions {
   base?: LogFields;
   colorize?: boolean;
   env?: NodeJS.ProcessEnv;
-  format?: LogFormat | string;
-  level?: LogLevel | string;
+  // `string & {}` keeps editor autocomplete for the known literals while still
+  // accepting arbitrary raw env/CLI strings, which are validated at runtime.
+  format?: LogFormat | (string & {});
+  level?: LogLevel | (string & {});
   stream?: { write(message: string): unknown };
 }
 
@@ -57,11 +59,11 @@ export interface HoopilotServerOptions extends CopilotAuthOptions {
   apiKey?: string;
   host?: string;
   logger?: HoopilotLogger;
-  logFormat?: LogFormat | string;
-  logLevel?: LogLevel | string;
+  logFormat?: LogFormat | (string & {});
+  logLevel?: LogLevel | (string & {});
   metrics?: MetricsRegistry;
   port?: number;
-  streamingProxyMode?: StreamingProxyMode | string;
+  streamingProxyMode?: StreamingProxyMode | (string & {});
 }
 
 export interface StartedHoopilotServer {
@@ -201,4 +203,13 @@ export interface MetricsSnapshot {
     total: number;
   };
   uptimeSeconds: number;
+}
+
+/** JSON body returned by the proxy's `/v1/usage` route. */
+export interface UsageResponseBody {
+  copilot: CopilotUsage | null;
+  copilot_error?: string;
+  object: "usage";
+  proxy: MetricsSnapshot;
+  version: string;
 }

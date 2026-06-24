@@ -3,7 +3,13 @@
 import { spawn } from "node:child_process";
 import { constants as osConstants } from "node:os";
 import type { FetchLike } from "./types";
-import { envValue } from "./util";
+import {
+  envValue,
+  errorMessage,
+  modelIdsFromResponse,
+  trimTrailingSlash,
+  truncatedResponseText,
+} from "./util";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
 const DEFAULT_CODEX_BIN = "codex";
@@ -123,13 +129,19 @@ export async function verifyCodexxModel(
   invocation: Pick<CodexxInvocation, "baseUrl" | "env" | "model">,
   fetcher: FetchLike = fetch,
 ): Promise<void> {
-  const modelsUrl = `${invocation.baseUrl.replace(/\/+$/, "")}/models`;
+  const modelsUrl = `${trimTrailingSlash(invocation.baseUrl)}/models`;
+  const apiKey = invocation.env.OPENAI_API_KEY;
+  if (apiKey === undefined) {
+    throw new Error(
+      "verifyCodexxModel requires invocation.env.OPENAI_API_KEY; build the invocation with buildCodexxInvocation.",
+    );
+  }
   let response: Response;
   try {
     response = await fetcher(modelsUrl, {
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${invocation.env.OPENAI_API_KEY ?? generateEphemeralApiKey()}`,
+        authorization: `Bearer ${apiKey}`,
       },
       method: "GET",
     });
@@ -141,11 +153,11 @@ export async function verifyCodexxModel(
 
   if (!response.ok) {
     throw new Error(
-      `Could not verify model ${JSON.stringify(invocation.model)} because ${modelsUrl} returned ${response.status}: ${await shortResponseText(response)}`,
+      `Could not verify model ${JSON.stringify(invocation.model)} because ${modelsUrl} returned ${response.status}: ${await truncatedResponseText(response)}`,
     );
   }
 
-  const models = modelIds(await response.json().catch(() => undefined));
+  const models = modelIdsFromResponse(await response.json().catch(() => undefined));
   if (models.length > 0 && !models.includes(invocation.model)) {
     throw new Error(
       `The logged-in Copilot account does not advertise model ${JSON.stringify(invocation.model)} at ${modelsUrl}. Available models: ${models.join(", ")}. After upgrading Hoopilot, rerun "hoopilot login" to refresh the Copilot OAuth token, or set CODEXX_MODEL to one of the advertised model IDs.`,
@@ -179,27 +191,6 @@ codexx does not start Hoopilot and does not change your shell environment. It se
 
 function signalNumber(signal: NodeJS.Signals): number {
   return osConstants.signals[signal] ?? 1;
-}
-
-function modelIds(value: unknown): string[] {
-  const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const data = "data" in record && Array.isArray(record.data) ? record.data : [];
-  return data
-    .map((entry) =>
-      entry && typeof entry === "object" && "id" in entry && typeof entry.id === "string"
-        ? entry.id
-        : undefined,
-    )
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
-}
-
-async function shortResponseText(response: Response): Promise<string> {
-  const text = await response.text();
-  return text.slice(0, 500);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 if (import.meta.main) {

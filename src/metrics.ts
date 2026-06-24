@@ -1,5 +1,6 @@
 import { extractTokenUsage } from "./openai";
 import type {
+  CopilotQuota,
   CopilotUsage,
   GithubRateLimit,
   GithubRateLimitSnapshot,
@@ -10,7 +11,7 @@ import type {
   RouteLatency,
   TokenUsage,
 } from "./types";
-import { asRecord } from "./util";
+import { asRecord, safeJsonParse } from "./util";
 
 /** Content-Type for the Prometheus text exposition format (version 0.0.4). */
 export const PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
@@ -129,30 +130,29 @@ export class MetricsRegistry {
     this.#githubRateLimit.set(resource, { ...rateLimit, resource });
   }
 
-  // Sanitize the model into a bounded label. The model can originate from a
-  // client request, so cap its length, strip characters that would corrupt the
-  // exposition format, and fold overflow past the cardinality limit into
-  // UNKNOWN_MODEL to keep the series count bounded.
-  #modelLabel(model: string): string {
-    const cleaned = cleanLabel(model).slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
-    if (!this.#tokens.has(cleaned) && this.#tokens.size >= MAX_TRACKED_MODELS) {
+  // Clean a raw value into a bounded exposition-format label: cap its length,
+  // strip characters that would corrupt the format, and fold overflow past the
+  // cardinality limit into UNKNOWN_MODEL so the series count stays bounded.
+  #boundedLabel(
+    value: string,
+    tracked: { has(key: string): boolean; size: number },
+    maxEntries: number,
+  ): string {
+    const cleaned = cleanLabel(value).slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
+    if (!tracked.has(cleaned) && tracked.size >= maxEntries) {
       return UNKNOWN_MODEL;
     }
     return cleaned;
   }
 
-  // The resource comes from a trusted upstream header, but clean and bound it
-  // with the same discipline as model labels: strip control characters that
-  // would corrupt the exposition format and fold overflow into "unknown".
+  // The model can originate from a (possibly hostile) client request.
+  #modelLabel(model: string): string {
+    return this.#boundedLabel(model, this.#tokens, MAX_TRACKED_MODELS);
+  }
+
+  // The resource comes from a trusted upstream header, but is bounded the same way.
   #rateLimitResource(resource: string): string {
-    const cleaned = cleanLabel(resource).slice(0, MAX_MODEL_LABEL_LENGTH) || UNKNOWN_MODEL;
-    if (
-      !this.#githubRateLimit.has(cleaned) &&
-      this.#githubRateLimit.size >= MAX_TRACKED_RATELIMIT_RESOURCES
-    ) {
-      return UNKNOWN_MODEL;
-    }
-    return cleaned;
+    return this.#boundedLabel(resource, this.#githubRateLimit, MAX_TRACKED_RATELIMIT_RESOURCES);
   }
 
   #observeDuration(route: string, seconds: number): void {
@@ -391,7 +391,7 @@ export class MetricsRegistry {
     const gauge = (
       suffix: string,
       help: string,
-      pick: (quota: (typeof categories)[number][1]) => number | undefined,
+      pick: (quota: CopilotQuota) => number | undefined,
     ): void => {
       const present = categories.filter(([, quota]) => pick(quota) !== undefined);
       if (present.length === 0) {
@@ -468,7 +468,7 @@ export class MetricsRegistry {
     function booleanGauge(
       suffix: string,
       help: string,
-      pick: (quota: (typeof categories)[number][1]) => boolean | undefined,
+      pick: (quota: CopilotQuota) => boolean | undefined,
     ): void {
       const present = categories.filter(([, quota]) => pick(quota) !== undefined);
       if (present.length === 0) {
@@ -486,7 +486,7 @@ export class MetricsRegistry {
     function dateGauge(
       suffix: string,
       help: string,
-      pick: (quota: (typeof categories)[number][1]) => string | undefined,
+      pick: (quota: CopilotQuota) => string | undefined,
     ): void {
       const present = categories
         .map(([category, quota]) => [category, Date.parse(pick(quota) ?? "")] as const)
@@ -551,7 +551,7 @@ export function recordResponseTextUsage(
       considerSseLine(line, accumulator.consider);
     }
   } else {
-    const parsed = safeParse(text);
+    const parsed = safeJsonParse(text);
     if (parsed !== undefined) {
       accumulator.consider(parsed);
     }
@@ -627,7 +627,7 @@ async function consumeUsage(
         considerSseLine(finalBuffer, accumulator.consider);
       }
     } else if (!overflowed && finalBuffer) {
-      const parsed = safeParse(finalBuffer);
+      const parsed = safeJsonParse(finalBuffer);
       if (parsed !== undefined) {
         accumulator.consider(parsed);
       }
@@ -678,17 +678,9 @@ function considerSseLine(line: string, consider: (payload: unknown) => void): vo
   if (!data || data === "[DONE]") {
     return;
   }
-  const parsed = safeParse(data);
+  const parsed = safeJsonParse(data);
   if (parsed !== undefined) {
     consider(parsed);
-  }
-}
-
-function safeParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
   }
 }
 

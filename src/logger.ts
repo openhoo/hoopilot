@@ -65,22 +65,34 @@ export function createHoopilotLogger(options: HoopilotLoggerOptions = {}): Hoopi
   };
 
   if (format === "pretty") {
-    return pino(
-      pinoOptions,
-      pretty({
-        colorize: options.colorize ?? process.stderr.isTTY,
-        destination: options.stream ?? 1,
-        ignore: "pid,hostname",
-        singleLine: true,
-        translateTime: "SYS:standard",
-      }),
-    ) as HoopilotLogger;
+    return asHoopilotLogger(
+      pino(
+        pinoOptions,
+        pretty({
+          // Probe the same sink we write to (stdout / fd 1), so colors are not
+          // emitted into a redirected file when only stderr is a TTY. A custom
+          // stream's TTY-ness is unknown, so default to no color there.
+          colorize: options.colorize ?? (options.stream ? false : process.stdout.isTTY),
+          destination: options.stream ?? 1,
+          ignore: "pid,hostname",
+          singleLine: true,
+          translateTime: "SYS:standard",
+        }),
+      ),
+    );
   }
 
   if (options.stream) {
-    return pino(pinoOptions, options.stream as pino.DestinationStream) as HoopilotLogger;
+    return asHoopilotLogger(pino(pinoOptions, options.stream as pino.DestinationStream));
   }
-  return pino(pinoOptions) as HoopilotLogger;
+  return asHoopilotLogger(pino(pinoOptions));
+}
+
+// Cast pino's Logger to HoopilotLogger through a checked assignment, so a drift
+// in either type surfaces as a compile error here instead of being masked by an
+// unchecked `as` at each call site.
+function asHoopilotLogger(logger: pino.Logger): HoopilotLogger {
+  return logger;
 }
 
 export function parseLogFormat(value: string | undefined): LogFormat {

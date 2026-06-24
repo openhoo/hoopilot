@@ -17,7 +17,7 @@ export const UPDATE_CHECK_INTERVAL_MS = 1000 * 60 * 60 * 24; // 24h
 export interface UpdateState {
   lastCheck: number;
   latestVersion: string | null;
-  etag?: string | null;
+  etag: string | null;
 }
 
 export interface CodexxShimFile {
@@ -243,21 +243,27 @@ export function formatUpdateNotice(current: string, latest: string, kind: Instal
 /** Parse the persisted update-check state, tolerating any malformed input. */
 export function parseState(text: string): UpdateState {
   try {
-    const data = JSON.parse(text) as Partial<UpdateState>;
+    const data: unknown = JSON.parse(text);
+    const record = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
     return {
-      lastCheck: typeof data.lastCheck === "number" ? data.lastCheck : 0,
-      latestVersion: typeof data.latestVersion === "string" ? data.latestVersion : null,
-      etag: typeof data.etag === "string" ? data.etag : null,
+      lastCheck: typeof record.lastCheck === "number" ? record.lastCheck : 0,
+      latestVersion: typeof record.latestVersion === "string" ? record.latestVersion : null,
+      etag: typeof record.etag === "string" ? record.etag : null,
     };
   } catch {
     return { lastCheck: 0, latestVersion: null, etag: null };
   }
 }
 
+export interface ReleaseAsset {
+  name: string;
+  url: string;
+}
+
 export interface LatestRelease {
   version: string;
   tag: string;
-  assets: Array<{ name: string; url: string }>;
+  assets: Array<ReleaseAsset>;
 }
 
 /** Parse the GitHub `releases/latest` response into the fields we need. */
@@ -270,7 +276,7 @@ export function parseLatestRelease(json: unknown): LatestRelease | null {
   if (!tag) {
     return null;
   }
-  const assets: Array<{ name: string; url: string }> = [];
+  const assets: Array<ReleaseAsset> = [];
   if (Array.isArray(record.assets)) {
     for (const item of record.assets) {
       if (item && typeof item === "object") {
