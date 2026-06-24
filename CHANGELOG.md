@@ -1,5 +1,19 @@
 # @openhoo/hoopilot Changelog
 
+## 2.0.0 (2026-06-24)
+
+### Other Changes
+
+- improve README accuracy, add TOC and requirements (a8c4b1c)
+- consolidate shared helpers, tighten types, fix latent bugs (fcc8964)
+- **server:** migrate HTTP layer from Bun.serve to Elysia (1058c49)
+- **server:** address Elysia review findings (86b1c35)
+
+### Breaking Changes
+
+- adopt Elysia HTTP framework and ESM-only packaging (e58234e)
+  - BREAKING: @openhoo/hoopilot is now published ESM-only. The CommonJS
+
 ## 1.3.0 (2026-06-24)
 
 ### Features
