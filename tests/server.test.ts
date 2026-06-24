@@ -1609,6 +1609,58 @@ describe("Elysia routing layer", () => {
     expect(health.headers.get("x-powered-by")).toBeNull();
     expect(health.headers.get("server")).toBeNull();
   });
+
+  it("streams the upstream SSE body through byte-for-byte", async () => {
+    const body = 'data: {"a":1}\n\ndata: [DONE]\n\n';
+    const handler = createHoopilotHandler(
+      oauthOptions(
+        async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", { body: '{"model":"gpt-5"}', method: "POST" }),
+    );
+
+    expect(response.status).toBe(200);
+    // A re-serialization through Elysia's mapResponse would re-chunk or alter the
+    // stream; assert the body bytes arrive exactly as the upstream produced them.
+    expect(await response.text()).toBe(body);
+  });
+
+  it("reports the caller's original path (not the canonicalized one) on 404", async () => {
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
+
+    const response = await handler(
+      new Request("http://localhost/v1/does-not-exist/", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "not_found", message: "No route for POST /v1/does-not-exist/." },
+    });
+  });
+
+  it("logs blocked cross-origin requests to the request logger", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch, logger: logs.logger });
+
+    const response = await handler(
+      new Request("http://localhost/v1/models", { headers: { origin: "https://evil.example" } }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          event: "http.request.forbidden_origin",
+          route: "models",
+        }),
+        level: "warn",
+        message: "blocked cross-origin browser request",
+      }),
+    );
+  });
 });
 
 const unusedFetch: FetchLike = async () => {

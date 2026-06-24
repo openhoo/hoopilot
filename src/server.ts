@@ -83,6 +83,22 @@ class RequestBodyTooLargeError extends Error {
   }
 }
 
+// Typed body-parse failures so onError discriminates them by `instanceof` like
+// the other handler errors, instead of matching on the message string.
+class InvalidJsonError extends Error {
+  constructor() {
+    super(INVALID_JSON_MESSAGE);
+    this.name = "InvalidJsonError";
+  }
+}
+
+class JsonNotObjectError extends Error {
+  constructor() {
+    super(JSON_OBJECT_MESSAGE);
+    this.name = "JsonNotObjectError";
+  }
+}
+
 export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
 ): (request: Request) => Promise<Response> {
@@ -139,7 +155,12 @@ export function createHoopilotHandler(
     // finishResponse() schedules, and the per-request child logger reaches the
     // Elysia lifecycle through `requestContext`.
     const inner = normalizeInnerRequest(request, apiPath, url);
-    requestContext.set(inner, { logger: requestLogger });
+    requestContext.set(inner, {
+      apiPath,
+      logger: requestLogger,
+      origin,
+      originalPath: url.pathname,
+    });
 
     let response: Response;
     try {
@@ -169,8 +190,16 @@ export function createHoopilotHandler(
   };
 }
 
+// Request-scoped data the bookend computes once and threads into the Elysia
+// lifecycle, keyed by the request object (see the WeakMap note above). Carrying
+// apiPath/origin here lets the onRequest gate reuse them instead of re-parsing
+// the URL, and originalPath lets the 404 message report the caller's path rather
+// than the canonicalized inner path the router matched against.
 interface RequestContext {
+  apiPath: string;
   logger: HoopilotLogger;
+  origin: string | undefined;
+  originalPath: string;
 }
 
 interface ServerDeps {
@@ -189,7 +218,10 @@ interface ServerDeps {
 // drive it per request with app.handle() from the bookend above. Route handlers
 // return the raw Response objects the existing helpers build — Elysia passes a
 // returned Response through untouched (no header injection, no re-serialization),
-// so the wire format stays byte-identical. Each handler reads its per-request
+// so the wire format stays byte-identical. This passthrough holds only because the
+// handlers never write to Elysia's `set` (headers/status/cookie) or `store`: doing so
+// would route the response back through mapResponse and re-serialize it, drifting the
+// bytes. Each handler reads its per-request
 // child logger from `requestContext` rather than recomputing it, which keeps the
 // request id and the original request path consistent between header and logs.
 // POST routes set `parse: "none"` so Elysia never consumes the body: the handlers
@@ -208,8 +240,25 @@ function buildApp(deps: ServerDeps) {
     requestContext,
   } = deps;
 
-  const loggerFor = (request: Request): HoopilotLogger =>
-    requestContext.get(request)?.logger ?? noopLogger;
+  // Recover the request-scoped context the bookend stashed (keyed by request
+  // identity — Elysia passes the same Request object through every hook/handler).
+  // A miss should never happen: the bookend always populates it before
+  // app.handle(). The fallback recomputes from the request purely as a crash
+  // guard so an unexpected re-wrapped request degrades instead of throwing.
+  const contextFor = (request: Request): RequestContext => {
+    const stored = requestContext.get(request);
+    if (stored) {
+      return stored;
+    }
+    const originalPath = new URL(request.url).pathname;
+    return {
+      apiPath: canonicalApiPath(originalPath),
+      logger: noopLogger,
+      origin: request.headers.get("origin")?.trim() || undefined,
+      originalPath,
+    };
+  };
+  const loggerFor = (request: Request): HoopilotLogger => contextFor(request).logger;
   const noBody = { parse: "none" } as const;
 
   return (
@@ -219,9 +268,7 @@ function buildApp(deps: ServerDeps) {
       // before the API-key gate, then enforce the gate. Returning a Response
       // short-circuits routing; the bookend still decorates it via finishResponse.
       .onRequest(({ request }) => {
-        const apiPath = canonicalApiPath(new URL(request.url).pathname);
-        const logger = loggerFor(request);
-        const origin = request.headers.get("origin")?.trim() || undefined;
+        const { apiPath, logger, origin } = contextFor(request);
 
         const browserOrigin = forbiddenBrowserOrigin(origin, request, allowedOrigins);
         if (browserOrigin) {
@@ -251,13 +298,12 @@ function buildApp(deps: ServerDeps) {
       // Registered before the routes: Elysia applies an error hook only to routes
       // declared after it, so a trailing onError would never see handler throws.
       .onError(({ code, error, request }) => {
-        const logger = loggerFor(request);
+        const { logger, originalPath } = contextFor(request);
         if (code === "NOT_FOUND") {
-          return jsonError(
-            404,
-            "not_found",
-            `No route for ${request.method} ${new URL(request.url).pathname}.`,
-          );
+          // Report the caller's original path, not the canonicalized inner path
+          // the router matched, so an unknown `/foo/` 404s as `/foo/` (matching
+          // the pre-Elysia handler) rather than the slash-stripped `/foo`.
+          return jsonError(404, "not_found", `No route for ${request.method} ${originalPath}.`);
         }
         if (error instanceof CopilotAuthError) {
           logger.warn(
@@ -267,7 +313,7 @@ function buildApp(deps: ServerDeps) {
           return jsonError(401, "copilot_auth_error", error.message);
         }
         const message = errorMessage(error);
-        if (message === INVALID_JSON_MESSAGE || message === JSON_OBJECT_MESSAGE) {
+        if (error instanceof InvalidJsonError || error instanceof JsonNotObjectError) {
           logger.warn(
             { err: errorDetails(error), event: "http.request.failed" },
             "request body was not usable json",
@@ -318,7 +364,7 @@ function buildApp(deps: ServerDeps) {
       )
       .post(
         "/v1/messages/count_tokens",
-        async ({ request }) => handleAnthropicCountTokens(await readJson(request)),
+        ({ request }) => handleAnthropicCountTokens(request),
         noBody,
       )
       .post(
@@ -497,7 +543,8 @@ async function handleAnthropicMessages(
   return jsonResponse(responsesResponseToAnthropicMessage(body, model));
 }
 
-function handleAnthropicCountTokens(body: JsonObject): Response {
+async function handleAnthropicCountTokens(request: Request): Promise<Response> {
+  const body = await readJson(request);
   return jsonResponse(estimateAnthropicMessageTokens(body));
 }
 
@@ -743,10 +790,10 @@ function parseJsonObject(text: string): JsonObject {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(INVALID_JSON_MESSAGE);
+    throw new InvalidJsonError();
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(JSON_OBJECT_MESSAGE);
+    throw new JsonNotObjectError();
   }
   return parsed as JsonObject;
 }

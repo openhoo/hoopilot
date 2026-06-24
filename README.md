@@ -99,6 +99,8 @@ npm install -g @openhoo/hoopilot
 bun add -g @openhoo/hoopilot
 ```
 
+The package is published **ESM-only**: the CLIs (`hoopilot`, `codexx`) and the library entry (`import { startHoopilotServer } from "@openhoo/hoopilot"`) both require an ESM loader. There is no CommonJS (`require()`) entry — it was dropped because Hoopilot is a Bun/ESM-native tool, not because any dependency forced it.
+
 ### Standalone binary
 
 When npm is unavailable but GitHub releases are reachable, install a prebuilt self-contained binary. Node.js and Bun are not required to run the binary.
