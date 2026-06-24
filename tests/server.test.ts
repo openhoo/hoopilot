@@ -1219,6 +1219,53 @@ describe("metrics and usage endpoints", () => {
     expect((await handler(new Request("http://localhost/metrics"))).status).toBe(401);
   });
 
+  it("serves the self-contained dashboard HTML at /dashboard", async () => {
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
+
+    const response = await handler(new Request("http://localhost/dashboard"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    const csp = response.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("connect-src 'self'");
+    const body = await response.text();
+    expect(body).toContain("<title>hoopilot");
+    expect(body).toContain("/v1/usage");
+    // The page must be self-contained: no external scripts, styles, or fonts.
+    expect(body).not.toContain("http://");
+    expect(body).not.toContain("https://");
+    expect(body).not.toContain("<link");
+  });
+
+  it("serves the dashboard shell without the API key gate so a browser can load it", async () => {
+    // /v1/usage stays gated, but the static shell is served so the page can prompt
+    // for the key. A browser navigation cannot send an Authorization header.
+    const handler = createHoopilotHandler({ apiKey: "local-key", env: {}, fetch: unusedFetch });
+
+    const dashboard = await handler(new Request("http://localhost/dashboard"));
+    expect(dashboard.status).toBe(200);
+    expect(dashboard.headers.get("content-type")).toContain("text/html");
+
+    // The data endpoint it polls is still protected.
+    expect((await handler(new Request("http://localhost/v1/usage"))).status).toBe(401);
+  });
+
+  it("still blocks cross-origin browser requests to the dashboard", async () => {
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
+
+    const response = await handler(
+      new Request("http://localhost/dashboard", {
+        headers: { origin: "https://evil.example" },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "forbidden_origin" } });
+  });
+
   it("records token usage and request counts from chat completions", async () => {
     const metrics = new MetricsRegistry();
     const handler = createHoopilotHandler({
@@ -1288,12 +1335,20 @@ describe("metrics and usage endpoints", () => {
     const body = (await response.json()) as {
       copilot: { plan: string; quotas: Record<string, { used: number }> };
       object: string;
-      proxy: { upstream: { errors: number; total: number }; uptimeSeconds: number };
+      proxy: {
+        latency: { avgMs: number; byRoute: Record<string, unknown>; count: number };
+        upstream: { errors: number; total: number };
+        uptimeSeconds: number;
+      };
+      version: string;
     };
     expect(body.object).toBe("usage");
+    expect(typeof body.version).toBe("string");
+    expect(body.version.length).toBeGreaterThan(0);
     expect(body.copilot.plan).toBe("individual_pro");
     expect(body.copilot.quotas.premium_interactions!.used).toBe(10);
     expect(typeof body.proxy.uptimeSeconds).toBe("number");
+    expect(typeof body.proxy.latency.avgMs).toBe("number");
     expect(body.proxy.upstream).toEqual({ errors: 0, total: 1 });
     // The quota call is recorded as an upstream request and cached for /metrics gauges.
     expect(metrics.snapshot().upstream).toEqual({ errors: 0, total: 1 });

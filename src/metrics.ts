@@ -3,9 +3,11 @@ import type {
   CopilotUsage,
   GithubRateLimit,
   GithubRateLimitSnapshot,
+  LatencySnapshot,
   MetricsSnapshot,
   ModelTokenTotals,
   RequestObservation,
+  RouteLatency,
   TokenUsage,
 } from "./types";
 import { asRecord } from "./util";
@@ -211,11 +213,44 @@ export class MetricsRegistry {
     return {
       githubRateLimit,
       inFlight: this.#inFlight,
+      latency: this.#latencySnapshot(),
       requests: { byRoute, byStatus, total: requestsTotal },
       startedAt: new Date(this.#startedAtMs).toISOString(),
       tokens: { byModel, extraction: { ...this.#extraction }, ...tokenTotals },
       upstream: { errors: upstreamErrors, total: upstreamTotal },
       uptimeSeconds: Math.max(0, Math.round((now() - this.#startedAtMs) / 1000)),
+    };
+  }
+
+  // Summarize the duration histogram into a JSON latency view: per-route count and
+  // exact average, plus overall average and estimated p50/p95. The percentiles come
+  // from the buckets aggregated across routes, so they share /metrics' resolution.
+  #latencySnapshot(): LatencySnapshot {
+    const byRoute: Record<string, RouteLatency> = {};
+    const aggregateBuckets = new Array<number>(DURATION_BUCKETS_SECONDS.length).fill(0);
+    let totalCount = 0;
+    let totalSum = 0;
+    for (const [route, entry] of this.#durations) {
+      byRoute[route] = {
+        avgMs: entry.count > 0 ? round2((entry.sum / entry.count) * 1000) : 0,
+        count: entry.count,
+      };
+      totalCount += entry.count;
+      totalSum += entry.sum;
+      for (let i = 0; i < aggregateBuckets.length; i += 1) {
+        aggregateBuckets[i] = (aggregateBuckets[i] ?? 0) + (entry.buckets[i] ?? 0);
+      }
+    }
+    return {
+      avgMs: totalCount > 0 ? round2((totalSum / totalCount) * 1000) : 0,
+      byRoute,
+      count: totalCount,
+      p50Ms: round2(
+        quantileFromBuckets(aggregateBuckets, DURATION_BUCKETS_SECONDS, totalCount, 0.5) * 1000,
+      ),
+      p95Ms: round2(
+        quantileFromBuckets(aggregateBuckets, DURATION_BUCKETS_SECONDS, totalCount, 0.95) * 1000,
+      ),
     };
   }
 
@@ -663,6 +698,38 @@ function modelText(value: unknown): string {
 
 function nonNegative(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+// Estimate a latency quantile from histogram bucket counts via Prometheus-style
+// linear interpolation within the bucket the target rank lands in. `bucketCounts[i]`
+// is the number of observations in `(bounds[i-1], bounds[i]]`; observations above the
+// last finite bound live only in the implicit +Inf bucket, for which that bound is
+// returned. Returns seconds.
+function quantileFromBuckets(
+  bucketCounts: number[],
+  bounds: readonly number[],
+  count: number,
+  q: number,
+): number {
+  if (count <= 0) {
+    return 0;
+  }
+  const rank = q * count;
+  let cumulative = 0;
+  for (let i = 0; i < bounds.length; i += 1) {
+    const inBucket = bucketCounts[i] ?? 0;
+    if (inBucket > 0 && cumulative + inBucket >= rank) {
+      const lower = i === 0 ? 0 : (bounds[i - 1] ?? 0);
+      const upper = bounds[i] ?? lower;
+      return lower + (upper - lower) * ((rank - cumulative) / inBucket);
+    }
+    cumulative += inBucket;
+  }
+  return bounds[bounds.length - 1] ?? 0;
 }
 
 // Drop ASCII control characters (and DEL) that would corrupt the Prometheus

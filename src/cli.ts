@@ -587,7 +587,7 @@ Commands:
 
 While the server runs, GET /metrics exposes Prometheus metrics (request counts,
 token usage, latency) and GET /v1/usage returns those metrics plus live Copilot
-quota as JSON.
+quota as JSON. Open GET /dashboard in a browser for a live usage and status view.
 
 Options:
   -p, --port <port>                 Port to listen on. Default: 4141

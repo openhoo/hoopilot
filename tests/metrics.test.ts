@@ -105,6 +105,33 @@ describe("MetricsRegistry", () => {
     expect(snapshot.startedAt).toBe(new Date(1_000).toISOString());
   });
 
+  it("summarizes request latency from the duration histogram", () => {
+    const metrics = new MetricsRegistry({ now: () => 0 });
+    metrics.observe({ durationMs: 100, method: "POST", route: "a", status: 200 });
+    metrics.observe({ durationMs: 200, method: "POST", route: "a", status: 200 });
+    metrics.observe({ durationMs: 50, method: "GET", route: "b", status: 200 });
+
+    const { latency } = metrics.snapshot();
+    expect(latency.count).toBe(3);
+    expect(latency.byRoute.a).toEqual({ avgMs: 150, count: 2 });
+    expect(latency.byRoute.b).toEqual({ avgMs: 50, count: 1 });
+    expect(latency.avgMs).toBe(116.67);
+    // p50/p95 interpolated from the [0.05, 0.1, 0.25, ...] buckets the samples land in.
+    expect(latency.p50Ms).toBe(75);
+    expect(latency.p95Ms).toBe(227.5);
+  });
+
+  it("reports zeroed latency before any request is observed", () => {
+    const metrics = new MetricsRegistry({ now: () => 0 });
+    expect(metrics.snapshot().latency).toEqual({
+      avgMs: 0,
+      byRoute: {},
+      count: 0,
+      p50Ms: 0,
+      p95Ms: 0,
+    });
+  });
+
   it("renders a valid Prometheus exposition", () => {
     const metrics = new MetricsRegistry({ now: () => 1_000 });
     metrics.observe({ durationMs: 120, method: "POST", route: "chat_completions", status: 200 });

@@ -157,10 +157,30 @@ export interface GithubRateLimitSnapshot {
   used?: number;
 }
 
+/** Request-latency summary for one route, in milliseconds. */
+export interface RouteLatency {
+  avgMs: number;
+  count: number;
+}
+
+/**
+ * Aggregate request-latency summary derived from the duration histogram. `avgMs`
+ * is exact; the percentiles are estimated from the histogram buckets (Prometheus-
+ * style linear interpolation), so they are approximate.
+ */
+export interface LatencySnapshot {
+  avgMs: number;
+  byRoute: Record<string, RouteLatency>;
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
 /** A point-in-time JSON view of the in-process metrics. */
 export interface MetricsSnapshot {
   githubRateLimit: Record<string, GithubRateLimitSnapshot>;
   inFlight: number;
+  latency: LatencySnapshot;
   requests: {
     byRoute: Record<string, number>;
     byStatus: Record<string, number>;

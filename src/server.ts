@@ -8,6 +8,7 @@ import {
 } from "./anthropic";
 import { CopilotAuthError } from "./auth";
 import { CopilotClient, normalizeCopilotUsage, parseRateLimitHeaders } from "./copilot";
+import { DASHBOARD_HTML } from "./dashboard";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
   MetricsRegistry,
@@ -39,7 +40,7 @@ import type {
   TokenUsage,
 } from "./types";
 import { asRecord, envValue } from "./util";
-import { IS_STANDALONE_BINARY } from "./version";
+import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
@@ -126,6 +127,14 @@ export function createHoopilotHandler(
 
     if (request.method === "OPTIONS") {
       return finish(new Response(null, { headers: corsHeaders() }));
+    }
+
+    // The dashboard is a static, secret-free HTML shell. Serve it before the
+    // API-key gate so a browser can open it by navigation (which cannot send an
+    // Authorization header). The data it renders comes from /v1/usage, which
+    // stays behind the gate; cross-origin browser access is already blocked above.
+    if (request.method === "GET" && apiPath === "/dashboard") {
+      return finish(dashboardResponse());
     }
 
     if (!isAuthorized(request, apiKey)) {
@@ -1005,6 +1014,9 @@ function routeFor(method: string, path: string): string {
   if (method === "GET" && (path === "/" || path === "/healthz")) {
     return "health";
   }
+  if (method === "GET" && path === "/dashboard") {
+    return "dashboard";
+  }
   if (method === "GET" && path === "/metrics") {
     return "metrics";
   }
@@ -1063,6 +1075,28 @@ function metricsResponse(metrics: MetricsRegistry): Response {
   });
 }
 
+// Serve the self-contained dashboard HTML. The per-request CORS and request-id
+// headers are layered on by finishResponse; the page itself embeds no secrets.
+// A strict CSP and frame-busting headers harden the page even though it handles
+// the local API key in the browser: it loads zero external resources and only
+// fetches the same-origin /v1/usage, so 'self'/'unsafe-inline' suffice, and
+// frame-ancestors/X-Frame-Options close any clickjacking surface on engines that
+// do not send Sec-Fetch-Metadata (which the cross-origin block relies on).
+function dashboardResponse(): Response {
+  return new Response(DASHBOARD_HTML, {
+    headers: {
+      ...corsHeaders(),
+      "content-security-policy":
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "content-type": "text/html; charset=utf-8",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    },
+    status: 200,
+  });
+}
+
 async function handleUsage(
   metrics: MetricsRegistry,
   readUsage: UsageReader,
@@ -1070,7 +1104,12 @@ async function handleUsage(
 ): Promise<Response> {
   const { copilot, error } = await readUsage(signal);
   const proxy = metrics.snapshot();
-  const body: JsonObject = { copilot: copilot ?? null, object: "usage", proxy };
+  const body: JsonObject = {
+    copilot: copilot ?? null,
+    object: "usage",
+    proxy,
+    version: await getVersion(),
+  };
   if (error) {
     body.copilot_error = error;
   }

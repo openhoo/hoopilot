@@ -14,6 +14,7 @@ This project uses GitHub Copilot service endpoints and is not an official GitHub
 - Anthropic Messages compatibility for Claude Code and other Anthropic-style clients.
 - Bundled `codexx` launcher that runs Codex against a local Hoopilot server with the right Responses API provider settings.
 - Local API-key gate, loopback-safe defaults, structured logs, Prometheus metrics, and Copilot quota reporting.
+- Self-contained live dashboard at `/dashboard` showing usage and status metrics in real time.
 - npm package, standalone binaries, Docker image, and self-update support for release binaries.
 
 ## Quick start
@@ -279,6 +280,12 @@ GitHub API usage is read from the `x-ratelimit-*` response headers that `api.git
 
 `/metrics` and `/v1/usage` are subject to the same `HOOPILOT_API_KEY` gate as the other routes.
 
+## Dashboard
+
+`GET /dashboard` serves a self-contained live dashboard — open `http://127.0.0.1:4141/dashboard` in a browser. It renders the proxy's status and usage in real time: request rate, tokens/sec, in-flight requests, uptime, a per-route request table, status-code and latency breakdowns, token usage by model, your Copilot quota, upstream-call health, and a throughput chart. It polls `/v1/usage` every few seconds (interval and pause are adjustable in the header) and computes rates client-side, with dark and light themes.
+
+The page is a single HTML document with no external resources — no CDN, fonts, or images — so it works offline, in the Docker image, and in the standalone binary. The HTML shell is served without the API-key gate (it contains no secrets) so a browser navigation can load it; the data it polls from `/v1/usage` stays behind the gate, and when `HOOPILOT_API_KEY` is set the page prompts for the key (stored in the browser and sent as `x-api-key`). Cross-origin browser access is blocked as for every route, so open the dashboard by navigating to it directly rather than linking from another site.
+
 ## Troubleshooting
 
 ### Codex auth errors
@@ -391,6 +398,7 @@ Options:
 ## Endpoints
 
 - `GET /` and `GET /healthz`
+- `GET /dashboard`
 - `GET /metrics`
 - `GET /v1/models`
 - `GET /v1/usage`
