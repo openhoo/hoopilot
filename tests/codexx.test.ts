@@ -19,6 +19,8 @@ describe("buildCodexxInvocation", () => {
       "--disable",
       "network_proxy",
       "-c",
+      "permissions.workspace.network.enabled=false",
+      "-c",
       'model_provider="hoopilot"',
       "-c",
       'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
@@ -51,6 +53,8 @@ describe("buildCodexxInvocation", () => {
     expect(invocation.args).toEqual([
       "--disable",
       "network_proxy",
+      "-c",
+      "permissions.workspace.network.enabled=false",
       "-c",
       'model_provider="hoopilot"',
       "-c",

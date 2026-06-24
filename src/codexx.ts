@@ -58,8 +58,19 @@ export function buildCodexxInvocation(
 
   return {
     args: [
+      // Codex ships a managed network proxy (codex-rs/network-proxy) that routes the
+      // agent's traffic through a local proxy on :3128 and enforces a domain allowlist.
+      // A host that is not allowlisted — like the local Hoopilot server — gets an instant
+      // 403 (the Squid error page) and never reaches Hoopilot. It has two independent
+      // gates: the `network_proxy` feature flag and the `permissions.workspace.network`
+      // config. Disabling only the feature (`--disable network_proxy`) does not reliably
+      // turn it off when the proxy is enabled through the permissions config, so set both
+      // off: the feature flag via `--disable`, and the proxy itself via the config key
+      // (when `enabled` is false the proxy no-ops and binds no listeners).
       "--disable",
       "network_proxy",
+      "-c",
+      "permissions.workspace.network.enabled=false",
       "-c",
       'model_provider="hoopilot"',
       "-c",
@@ -186,7 +197,7 @@ Environment:
   CODEXX_SKIP_MODEL_PREFLIGHT
                        Set to 1 to skip checking /v1/models before starting Codex.
 
-codexx does not start Hoopilot and does not change your shell environment. It selects a temporary Hoopilot model provider with Responses WebSockets disabled, uses ${DEFAULT_MODEL} with ${DEFAULT_REASONING_EFFORT} reasoning by default, disables Codex's network_proxy feature, and removes proxy variables only from the spawned Codex process.`;
+codexx does not start Hoopilot and does not change your shell environment. It selects a temporary Hoopilot model provider with Responses WebSockets disabled, uses ${DEFAULT_MODEL} with ${DEFAULT_REASONING_EFFORT} reasoning by default, disables Codex's managed network proxy (permissions.workspace.network.enabled=false) so requests reach the local server instead of being blocked by its allowlist, and removes proxy variables only from the spawned Codex process.`;
 }
 
 function signalNumber(signal: NodeJS.Signals): number {
