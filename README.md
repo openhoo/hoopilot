@@ -7,15 +7,41 @@ Hoopilot is a local OpenAI- and Anthropic-compatible proxy for GitHub Copilot ac
 
 This project uses GitHub Copilot service endpoints and is not an official GitHub product. Upstream behavior can change without notice. Use Hoopilot only with accounts and usage patterns you are allowed to use.
 
+## Contents
+
+- [Highlights](#highlights)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Install](#install)
+- [Update](#update)
+- [Running the proxy](#running-the-proxy)
+- [Client setup](#client-setup)
+- [Authentication](#authentication)
+- [Logging](#logging)
+- [Metrics and usage](#metrics-and-usage)
+- [Dashboard](#dashboard)
+- [Troubleshooting](#troubleshooting)
+- [Configuration](#configuration)
+- [CLI reference](#cli-reference)
+- [Endpoints](#endpoints)
+- [Development](#development)
+- [Release](#release)
+
 ## Highlights
 
-- Browser-based GitHub Copilot OAuth login with a local credential store.
+- GitHub Copilot OAuth login via GitHub's device flow — prints a one-time code and opens your browser when possible — with a local credential store.
 - OpenAI-compatible Chat Completions, Responses, legacy Completions, and model-list routes.
 - Anthropic Messages compatibility for Claude Code and other Anthropic-style clients.
 - Bundled `codexx` launcher that runs Codex against a local Hoopilot server with the right Responses API provider settings.
 - Local API-key gate, loopback-safe defaults, structured logs, Prometheus metrics, and Copilot quota reporting.
 - Self-contained live dashboard at `/dashboard` showing usage and status metrics in real time.
 - npm package, standalone binaries, Docker image, and self-update support for release binaries.
+
+## Requirements
+
+- A GitHub account with an active GitHub Copilot subscription.
+- [Bun](https://bun.sh) 1.3 or newer to run from npm or source — the CLI runs on the Bun runtime, so `bun` must be on your `PATH` (this applies to `npx @openhoo/hoopilot` too).
+- Nothing extra for the standalone binary or Docker image: both bundle the runtime, so neither needs Bun or Node.js installed.
 
 ## Quick start
 
@@ -55,6 +81,8 @@ npx --package @openhoo/hoopilot codexx
 
 ## Install
 
+Choose the method that fits your environment: **npm** if you already have Bun, a **standalone binary** for a dependency-free install, or **Docker** to run Hoopilot as a long-lived service.
+
 ### npm
 
 Run without installing:
@@ -63,10 +91,11 @@ Run without installing:
 npx @openhoo/hoopilot
 ```
 
-Or install the package globally:
+Or install the package globally with either npm or Bun:
 
 ```sh
 npm install -g @openhoo/hoopilot
+# or
 bun add -g @openhoo/hoopilot
 ```
 
@@ -114,7 +143,7 @@ docker run -d --name hoopilot --restart unless-stopped \
   -v hoopilot-data:/data ghcr.io/openhoo/hoopilot
 ```
 
-Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:0.10`, `:0.10.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
+Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:1.3`, `:1.3.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
 
 Because it binds a non-loopback interface, the image fails closed: it refuses to start unless you set `HOOPILOT_API_KEY` to a strong, unique secret (well-known demo keys are rejected). Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`. To intentionally run without authentication — for example behind your own authenticating proxy — set `HOOPILOT_ALLOW_UNAUTHENTICATED=1`.
 
@@ -172,9 +201,7 @@ export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
 export OPENAI_API_KEY=hoopilot
 ```
 
-The client key value is arbitrary when the server runs without `HOOPILOT_API_KEY`; if you set one, use that value here instead.
-
-Use any model returned by:
+The client key is arbitrary unless you set `HOOPILOT_API_KEY` (see [Running the proxy](#running-the-proxy)). Available models depend on your Copilot plan; list the ones your account can use with:
 
 ```sh
 hoopilot models
@@ -225,7 +252,7 @@ Direct bearer tokens, GitHub CLI token fallback, classic GitHub PATs, and fine-g
 
 Re-run `hoopilot login` after upgrading Hoopilot if Copilot reports a supported model as unavailable. Older stored tokens can have a reduced model set.
 
-To print the verified OAuth token for another local tool, use `--print-key`. Login status goes to stderr, so stdout contains only the token.
+To print the verified OAuth token for another local tool, use `--print-key` (the alias `--print-token` also works). Login status goes to stderr, so stdout contains only the token.
 
 ```sh
 hoopilot login --print-key | sed 's/^/COPILOT_OAUTH_TOKEN=/' >> .env
@@ -270,7 +297,7 @@ Incoming `x-request-id` headers are preserved on responses. If a request has no 
 
 Hoopilot tracks token usage, request counts, and latency in memory while the server runs. It can also report your GitHub Copilot account quota and premium-request usage, plus your GitHub REST API rate-limit budget.
 
-- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`). It exposes request counters, upstream call counters, token counters by model and type, a request-duration histogram, an in-flight gauge, Copilot quota gauges, and GitHub REST API rate-limit gauges (`hoopilot_github_ratelimit_limit`, `_remaining`, `_used`, `_reset_timestamp_seconds`, `_retry_after_seconds`, labelled by `resource`) — the quota and rate-limit series appear after `/v1/usage` has been fetched at least once. Counters reset to zero on restart, which Prometheus handles natively.
+- `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4; charset=utf-8`). It exposes request counters, upstream call counters, token counters by model and type, a request-duration histogram, an in-flight gauge, process start-time and uptime gauges (`hoopilot_process_start_time_seconds`, `hoopilot_uptime_seconds`), Copilot quota gauges, and GitHub REST API rate-limit gauges (`hoopilot_github_ratelimit_limit`, `_remaining`, `_used`, `_reset_timestamp_seconds`, `_retry_after_seconds`, labelled by `resource`) — the quota and rate-limit series appear after `/v1/usage` has been fetched at least once. Counters reset to zero on restart, which Prometheus handles natively.
 - `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub and cached for 60 seconds. If quota cannot be read, `copilot` is `null` and `copilot_error` explains why. The snapshot's `proxy.githubRateLimit` field reports the most recent GitHub REST rate-limit budget per resource (`limit`, `remaining`, `used`, `resetAt`, `retryAfterSeconds`, `observedAt`).
 - `hoopilot usage` prints your Copilot plan and quota — and, when GitHub returns them, your GitHub API rate-limit budget — from the command line.
 
@@ -312,6 +339,8 @@ If `/v1/models` returns `401 copilot_auth_error`, rerun `hoopilot login` and con
 
 ## Configuration
 
+Settings written as `ENV / --flag` accept either the environment variable or the command-line flag.
+
 Server and local-client settings:
 
 | Setting | Description |
@@ -322,14 +351,14 @@ Server and local-client settings:
 | `--api-key-file` | Read the local API key from a file instead of argv. |
 | `HOOPILOT_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to make cross-origin requests. Loopback origins are always allowed; every other origin is blocked. |
 | `HOOPILOT_ALLOW_UNAUTHENTICATED` / `--allow-unauthenticated` | Allow non-loopback binds without a local API key. |
-| `HOOPILOT_STREAM_MODE` / `--stream-mode` | `auto`, `live`, or `buffer`. `auto` buffers streams for Windows standalone binaries. |
+| `HOOPILOT_STREAM_MODE` / `--stream-mode` | `auto`, `live`, or `buffer`. `auto` buffers streams for Windows standalone binaries. `HOOPILOT_STREAMING_PROXY_MODE` is accepted as an alias. |
 
 Copilot and GitHub settings:
 
 | Setting | Description |
 | --- | --- |
 | `HOOPILOT_AUTH_FILE` / `--auth-file` | OAuth credential store path. |
-| `HOOPILOT_GITHUB_CLIENT_ID` | GitHub OAuth app client ID override. |
+| `HOOPILOT_GITHUB_CLIENT_ID` | GitHub OAuth app client ID override. `COPILOT_GITHUB_CLIENT_ID` is accepted as an alias. |
 | `HOOPILOT_GITHUB_DOMAIN` | GitHub domain override. Default: `github.com`. |
 | `COPILOT_API_BASE_URL` / `--copilot-api-base-url` | Upstream Copilot API base URL. Default: `https://api.githubcopilot.com`. |
 | `HOOPILOT_GITHUB_API_BASE_URL` | GitHub REST API base URL used for quota lookup. Default: `https://api.github.com`. |
