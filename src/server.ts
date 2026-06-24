@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { Elysia } from "elysia";
 import {
   AnthropicCompatibilityError,
   anthropicMessagesToResponsesRequest,
@@ -94,8 +95,25 @@ export function createHoopilotHandler(
   const recordTokens: TokenRecorder = (model, usage) => metrics.recordTokens(model, usage);
   const recordExtraction: ExtractionRecorder = (extracted) =>
     metrics.recordTokenExtraction(extracted);
-  const streamingProxyMode = resolveStreamingProxyMode(options);
-  const bufferProxyBodies = shouldBufferProxyBodies(streamingProxyMode);
+  const bufferProxyBodies = shouldBufferProxyBodies(resolveStreamingProxyMode(options));
+
+  // Per-request channel into the Elysia lifecycle. The bookend below builds the
+  // child logger once (with the canonical request id and the original path) and
+  // stashes it here keyed by the request object, which Elysia passes through by
+  // identity to onRequest/handlers/onError — so the id in the response header and
+  // every log line agree without recomputing (or regenerating) it inside Elysia.
+  const requestContext = new WeakMap<Request, RequestContext>();
+  const app = buildApp({
+    apiKey,
+    allowedOrigins,
+    bufferProxyBodies,
+    client,
+    metrics,
+    readUsage,
+    recordExtraction,
+    recordTokens,
+    requestContext,
+  });
 
   return async (request: Request): Promise<Response> => {
     const startedAt = performance.now();
@@ -112,164 +130,278 @@ export function createHoopilotHandler(
     metrics.startRequest();
     const origin = request.headers.get("origin")?.trim() || undefined;
     const corsOrigin = resolveCorsAllowOrigin(origin, allowedOrigins);
-    const finish = (response: Response): Response =>
-      finishResponse(response, {
-        corsOrigin,
-        logger: requestLogger,
-        method: request.method,
-        metrics,
-        requestId,
-        route,
-        startedAt,
-        closeConnection: bufferProxyBodies,
-        trackStreamingBody: !bufferProxyBodies,
-      });
 
-    const browserOrigin = forbiddenBrowserOrigin(origin, request, allowedOrigins);
-    if (browserOrigin) {
-      requestLogger.warn(
-        { event: "http.request.forbidden_origin", origin: browserOrigin },
-        "blocked cross-origin browser request",
-      );
-      return finish(jsonError(403, "forbidden_origin", FORBIDDEN_BROWSER_ORIGIN_MESSAGE));
-    }
+    // Elysia owns routing, body-parse control, the pre-routing gates, and error
+    // mapping. The cross-cutting bookend stays out here so it runs on EVERY
+    // response — routed, gated, 404, or thrown — regardless of Elysia's
+    // short-circuit semantics (an onRequest gate skips mapResponse/onAfterResponse):
+    // metrics.startRequest() above pairs with the metrics.observe() that
+    // finishResponse() schedules, and the per-request child logger reaches the
+    // Elysia lifecycle through `requestContext`.
+    const inner = normalizeInnerRequest(request, apiPath, url);
+    requestContext.set(inner, { logger: requestLogger });
 
-    if (request.method === "OPTIONS") {
-      return finish(new Response(null, { headers: corsHeaders() }));
-    }
-
-    // The dashboard is a static, secret-free HTML shell. Serve it before the
-    // API-key gate so a browser can open it by navigation (which cannot send an
-    // Authorization header). The data it renders comes from /v1/usage, which
-    // stays behind the gate; cross-origin browser access is already blocked above.
-    if (request.method === "GET" && apiPath === "/dashboard") {
-      return finish(dashboardResponse());
-    }
-
-    if (!isAuthorized(request, apiKey)) {
-      requestLogger.warn({ event: "http.request.unauthorized" }, "invalid hoopilot api key");
-      return finish(jsonError(401, "invalid_api_key", "Invalid or missing Hoopilot API key."));
-    }
-
+    let response: Response;
     try {
-      // `route` is the canonical name routeFor() derived from API_ROUTES, so the
-      // dispatch keys off it rather than re-enumerating the (method, path) table.
-      switch (route) {
-        case "health":
-          return finish(jsonResponse({ name: "hoopilot", object: "health", status: "ok" }));
-        case "metrics":
-          return finish(metricsResponse(metrics));
-        case "usage":
-          return finish(await handleUsage(metrics, readUsage, request.signal));
-        case "responses_websocket":
-          return finish(websocketUnsupportedResponse());
-        case "models":
-          return finish(await handleModels(client, metrics, request.signal, requestLogger));
-        case "anthropic_messages":
-          return finish(
-            await handleAnthropicMessages(
-              client,
-              metrics,
-              recordTokens,
-              recordExtraction,
-              request,
-              requestLogger,
-              bufferProxyBodies,
-            ),
-          );
-        case "anthropic_count_tokens":
-          return finish(handleAnthropicCountTokens(await readJson(request)));
-        case "chat_completions":
-          return finish(
-            await handleChatCompletions(
-              client,
-              metrics,
-              recordTokens,
-              recordExtraction,
-              request,
-              requestLogger,
-              bufferProxyBodies,
-            ),
-          );
-        case "completions":
-          return finish(
-            await handleCompletions(
-              client,
-              metrics,
-              recordTokens,
-              recordExtraction,
-              request,
-              requestLogger,
-              bufferProxyBodies,
-            ),
-          );
-        case "responses_compact":
-          return finish(
-            await handleResponsesCompact(
-              client,
-              metrics,
-              recordTokens,
-              recordExtraction,
-              request,
-              requestLogger,
-            ),
-          );
-        case "responses":
-          return finish(
-            await handleResponses(
-              client,
-              metrics,
-              recordTokens,
-              recordExtraction,
-              request,
-              requestLogger,
-              bufferProxyBodies,
-            ),
-          );
-        default:
-          return finish(
-            jsonError(404, "not_found", `No route for ${request.method} ${url.pathname}.`),
-          );
-      }
+      response = await app.handle(inner);
     } catch (error) {
-      if (error instanceof CopilotAuthError) {
-        requestLogger.warn(
-          { err: errorDetails(error), event: "copilot.auth.missing" },
-          "copilot auth failed",
-        );
-        return finish(jsonError(401, "copilot_auth_error", error.message));
-      }
-      const message = errorMessage(error);
-      if (message === INVALID_JSON_MESSAGE || message === JSON_OBJECT_MESSAGE) {
-        requestLogger.warn(
-          { err: errorDetails(error), event: "http.request.failed" },
-          "request body was not usable json",
-        );
-        return finish(jsonError(400, "invalid_request_error", message));
-      } else if (
-        error instanceof OpenAICompatibilityError ||
-        error instanceof AnthropicCompatibilityError
-      ) {
-        requestLogger.warn(
-          { err: errorDetails(error), event: "http.request.failed" },
-          "request body used unsupported compatibility fields",
-        );
-        return finish(jsonError(400, "invalid_request_error", message));
-      } else if (error instanceof RequestBodyTooLargeError) {
-        requestLogger.warn(
-          { err: errorDetails(error), event: "http.request.failed" },
-          "request body exceeded size limit",
-        );
-        return finish(jsonError(413, "request_too_large", message));
-      } else {
-        requestLogger.error(
-          { err: errorDetails(error), event: "http.request.failed" },
-          "request failed",
-        );
-      }
-      return finish(jsonError(500, "internal_error", message));
+      // Elysia resolves handler and hook throws through onError, so this only
+      // catches a failure inside onError itself — still finish so the in-flight
+      // gauge opened by startRequest() above is always balanced.
+      requestLogger.error(
+        { err: errorDetails(error), event: "http.request.failed" },
+        "request failed",
+      );
+      response = jsonError(500, "internal_error", errorMessage(error));
     }
+
+    return finishResponse(response, {
+      corsOrigin,
+      logger: requestLogger,
+      method: request.method,
+      metrics,
+      requestId,
+      route,
+      startedAt,
+      closeConnection: bufferProxyBodies,
+      trackStreamingBody: !bufferProxyBodies,
+    });
   };
+}
+
+interface RequestContext {
+  logger: HoopilotLogger;
+}
+
+interface ServerDeps {
+  apiKey: string | undefined;
+  allowedOrigins: ReadonlySet<string>;
+  bufferProxyBodies: boolean;
+  client: CopilotClient;
+  metrics: MetricsRegistry;
+  readUsage: UsageReader;
+  recordExtraction: ExtractionRecorder;
+  recordTokens: TokenRecorder;
+  requestContext: WeakMap<Request, RequestContext>;
+}
+
+// Build the Elysia application once per handler factory (closing over deps), then
+// drive it per request with app.handle() from the bookend above. Route handlers
+// return the raw Response objects the existing helpers build — Elysia passes a
+// returned Response through untouched (no header injection, no re-serialization),
+// so the wire format stays byte-identical. Each handler reads its per-request
+// child logger from `requestContext` rather than recomputing it, which keeps the
+// request id and the original request path consistent between header and logs.
+// POST routes set `parse: "none"` so Elysia never consumes the body: the handlers
+// stream it themselves under the 16 MB cap (readRequestText) and forward the raw
+// bytes upstream verbatim.
+function buildApp(deps: ServerDeps) {
+  const {
+    apiKey,
+    allowedOrigins,
+    bufferProxyBodies,
+    client,
+    metrics,
+    readUsage,
+    recordExtraction,
+    recordTokens,
+    requestContext,
+  } = deps;
+
+  const loggerFor = (request: Request): HoopilotLogger =>
+    requestContext.get(request)?.logger ?? noopLogger;
+  const noBody = { parse: "none" } as const;
+
+  return (
+    new Elysia()
+      // Pre-routing gate, in the exact order the hand-rolled handler used: block
+      // cross-origin browser requests, answer CORS preflight, serve the dashboard
+      // before the API-key gate, then enforce the gate. Returning a Response
+      // short-circuits routing; the bookend still decorates it via finishResponse.
+      .onRequest(({ request }) => {
+        const apiPath = canonicalApiPath(new URL(request.url).pathname);
+        const logger = loggerFor(request);
+        const origin = request.headers.get("origin")?.trim() || undefined;
+
+        const browserOrigin = forbiddenBrowserOrigin(origin, request, allowedOrigins);
+        if (browserOrigin) {
+          logger.warn(
+            { event: "http.request.forbidden_origin", origin: browserOrigin },
+            "blocked cross-origin browser request",
+          );
+          return jsonError(403, "forbidden_origin", FORBIDDEN_BROWSER_ORIGIN_MESSAGE);
+        }
+        if (request.method === "OPTIONS") {
+          return new Response(null, { headers: corsHeaders() });
+        }
+        // The dashboard is a static, secret-free HTML shell. Serve it before the
+        // API-key gate so a browser can open it by navigation (which cannot send
+        // an Authorization header). The data it renders comes from /v1/usage,
+        // which stays behind the gate; cross-origin access is blocked above.
+        if (request.method === "GET" && apiPath === "/dashboard") {
+          return dashboardResponse();
+        }
+        if (!isAuthorized(request, apiKey)) {
+          logger.warn({ event: "http.request.unauthorized" }, "invalid hoopilot api key");
+          return jsonError(401, "invalid_api_key", "Invalid or missing Hoopilot API key.");
+        }
+      })
+      // Reproduce the hand-rolled catch block: map the typed errors the handlers
+      // throw (and Elysia's NOT_FOUND) onto the same status/code/log events.
+      // Registered before the routes: Elysia applies an error hook only to routes
+      // declared after it, so a trailing onError would never see handler throws.
+      .onError(({ code, error, request }) => {
+        const logger = loggerFor(request);
+        if (code === "NOT_FOUND") {
+          return jsonError(
+            404,
+            "not_found",
+            `No route for ${request.method} ${new URL(request.url).pathname}.`,
+          );
+        }
+        if (error instanceof CopilotAuthError) {
+          logger.warn(
+            { err: errorDetails(error), event: "copilot.auth.missing" },
+            "copilot auth failed",
+          );
+          return jsonError(401, "copilot_auth_error", error.message);
+        }
+        const message = errorMessage(error);
+        if (message === INVALID_JSON_MESSAGE || message === JSON_OBJECT_MESSAGE) {
+          logger.warn(
+            { err: errorDetails(error), event: "http.request.failed" },
+            "request body was not usable json",
+          );
+          return jsonError(400, "invalid_request_error", message);
+        }
+        if (
+          error instanceof OpenAICompatibilityError ||
+          error instanceof AnthropicCompatibilityError
+        ) {
+          logger.warn(
+            { err: errorDetails(error), event: "http.request.failed" },
+            "request body used unsupported compatibility fields",
+          );
+          return jsonError(400, "invalid_request_error", message);
+        }
+        if (error instanceof RequestBodyTooLargeError) {
+          logger.warn(
+            { err: errorDetails(error), event: "http.request.failed" },
+            "request body exceeded size limit",
+          );
+          return jsonError(413, "request_too_large", message);
+        }
+        logger.error({ err: errorDetails(error), event: "http.request.failed" }, "request failed");
+        return jsonError(500, "internal_error", message);
+      })
+      .get("/", () => jsonResponse({ name: "hoopilot", object: "health", status: "ok" }))
+      .get("/healthz", () => jsonResponse({ name: "hoopilot", object: "health", status: "ok" }))
+      .get("/metrics", () => metricsResponse(metrics))
+      .get("/v1/usage", ({ request }) => handleUsage(metrics, readUsage, request.signal))
+      .get("/v1/models", ({ request }) =>
+        handleModels(client, metrics, request.signal, loggerFor(request)),
+      )
+      .get("/v1/responses", () => websocketUnsupportedResponse())
+      .post(
+        "/v1/messages",
+        ({ request }) =>
+          handleAnthropicMessages(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            loggerFor(request),
+            bufferProxyBodies,
+          ),
+        noBody,
+      )
+      .post(
+        "/v1/messages/count_tokens",
+        async ({ request }) => handleAnthropicCountTokens(await readJson(request)),
+        noBody,
+      )
+      .post(
+        "/v1/chat/completions",
+        ({ request }) =>
+          handleChatCompletions(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            loggerFor(request),
+            bufferProxyBodies,
+          ),
+        noBody,
+      )
+      .post(
+        "/v1/completions",
+        ({ request }) =>
+          handleCompletions(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            loggerFor(request),
+            bufferProxyBodies,
+          ),
+        noBody,
+      )
+      .post(
+        "/v1/responses/compact",
+        ({ request }) =>
+          handleResponsesCompact(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            loggerFor(request),
+          ),
+        noBody,
+      )
+      .post(
+        "/v1/responses",
+        ({ request }) =>
+          handleResponses(
+            client,
+            metrics,
+            recordTokens,
+            recordExtraction,
+            request,
+            loggerFor(request),
+            bufferProxyBodies,
+          ),
+        noBody,
+      )
+  );
+}
+
+// Normalize the path the Elysia router matches against — map bare aliases like
+// `/responses` onto `/v1/responses` and strip trailing slashes (reusing the
+// single-source canonicalApiPath table) — while leaving the request's body
+// stream and abort signal intact for the handlers. Bun's Request constructor
+// copies the body and makes the new signal follow the original's abort, so the
+// clone forwards bytes and cancels upstream on disconnect exactly as before.
+// Returns the request unchanged when no rewrite is needed.
+function normalizeInnerRequest(request: Request, canonicalPath: string, url: URL): Request {
+  if (canonicalPath === url.pathname) {
+    return request;
+  }
+  const target = new URL(url);
+  target.pathname = canonicalPath;
+  const init: RequestInit & { duplex?: "half" } = {
+    headers: request.headers,
+    method: request.method,
+    signal: request.signal,
+  };
+  if (request.body) {
+    init.body = request.body;
+    init.duplex = "half";
+  }
+  return new Request(target, init);
 }
 
 export function startHoopilotServer(options: HoopilotServerOptions = {}): StartedHoopilotServer {

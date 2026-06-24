@@ -16,7 +16,8 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Build dist/cli.js (+ index, codexx). tsup externalizes pino/pino-pretty.
+# Build dist/cli.js (+ index, codexx). tsup externalizes runtime deps
+# (elysia, pino, pino-pretty); stage 2 installs them for the runtime image.
 COPY tsconfig.json ./
 COPY src ./src
 RUN bun run build

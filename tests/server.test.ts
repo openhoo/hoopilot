@@ -1540,6 +1540,77 @@ describe("metrics and usage endpoints", () => {
   });
 });
 
+// Pins for the Elysia routing layer: guard wire details the rest of the suite
+// asserts only loosely (toMatchObject) or not at all, so a future framework
+// change that re-serializes bodies, leaks headers, or unbalances the in-flight
+// gauge fails loudly here.
+describe("Elysia routing layer", () => {
+  it("forwards the exact Responses request body bytes upstream", async () => {
+    const upstreamRequests: Request[] = [];
+    const handler = createHoopilotHandler(
+      oauthOptions(async (input, init) => {
+        upstreamRequests.push(new Request(input, init));
+        return new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } });
+      }),
+    );
+
+    // Whitespace and key order a JSON.parse/stringify round-trip would not
+    // preserve — the proxy must forward the body verbatim.
+    const exact = '{"model":"gpt-5",  "instructions":"hi" ,"extra":{"z":1,"a":2}}';
+    const response = await handler(
+      new Request("http://localhost/v1/responses", { body: exact, method: "POST" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await upstreamRequests[0]!.text()).toBe(exact);
+  });
+
+  it("balances the in-flight gauge when a request throws", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => {
+        throw new Error("boom");
+      }),
+      metrics,
+    });
+
+    const response = await handler(new Request("http://localhost/v1/models"));
+    expect(response.status).toBe(500);
+
+    const snapshot = metrics.snapshot();
+    expect(snapshot.inFlight).toBe(0);
+    expect(snapshot.requests.total).toBe(1);
+  });
+
+  it("does not inject framework headers onto responses", async () => {
+    const streaming = createHoopilotHandler(
+      oauthOptions(
+        async () =>
+          new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+    const sse = await streaming(
+      new Request("http://localhost/v1/responses", { body: '{"model":"gpt-5"}', method: "POST" }),
+    );
+    expect(sse.headers.get("content-type")).toContain("text/event-stream");
+    for (const header of [
+      "x-powered-by",
+      "server",
+      "content-encoding",
+      "content-length",
+      "transfer-encoding",
+    ]) {
+      expect(sse.headers.get(header)).toBeNull();
+    }
+
+    const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
+    const health = await handler(new Request("http://localhost/healthz"));
+    expect(health.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(health.headers.get("x-powered-by")).toBeNull();
+    expect(health.headers.get("server")).toBeNull();
+  });
+});
+
 const unusedFetch: FetchLike = async () => {
   throw new Error("fetch should not be called");
 };

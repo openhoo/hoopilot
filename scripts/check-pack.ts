@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 const requiredFiles = [
   "dist/cli.js",
   "dist/codexx.js",
-  "dist/index.cjs",
   "dist/index.d.ts",
   "dist/index.js",
   "README.md",

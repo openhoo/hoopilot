@@ -28,8 +28,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "types": "./dist/index.d.ts",
@@ -38,7 +37,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean && tsup src/cli.ts src/codexx.ts --format esm --sourcemap",
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean && tsup src/cli.ts src/codexx.ts --format esm --sourcemap",
     "build:binaries": "bash scripts/build-binaries.sh",
     "biome:check": "biome ci --error-on-warnings .",
     "biome:fix": "biome check --write .",
@@ -65,6 +64,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "elysia": "^1.4.29",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3"
   }
