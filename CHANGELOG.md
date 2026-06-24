@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.1 (2026-06-24)
+
+### Bug Fixes
+
+- **codexx:** disable Codex's managed network proxy so requests reach Hoopilot (dd1cdb3)
+
 ## 2.1.0 (2026-06-24)
 
 ### Features
