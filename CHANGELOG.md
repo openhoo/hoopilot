@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 1.3.0 (2026-06-24)
+
+### Features
+
+- **dashboard:** serve a self-contained live usage/status dashboard (918261c)
+
 ## 1.2.0 (2026-06-23)
 
 ### Features
