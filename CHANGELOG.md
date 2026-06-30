@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.6 (2026-06-30)
+
+### Bug Fixes
+
+- quiet dashboard usage polling (f12b4fa)
+
 ## 2.1.5 (2026-06-30)
 
 ### Bug Fixes
