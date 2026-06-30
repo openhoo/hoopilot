@@ -124,7 +124,7 @@ jobs:
         run: bash scripts/build-binaries.sh "${{ needs.release.outputs.version }}"
 
       - name: Generate binary artifact attestations
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
           subject-path: dist/bin/**
 
@@ -187,7 +187,7 @@ jobs:
           labels: ${{ steps.docker_meta.outputs.labels }}
 
       - name: Generate image artifact attestation
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
