@@ -67,6 +67,22 @@ describe("extractTokenUsage", () => {
     });
   });
 
+  it("maps Anthropic-style cache reads into cached input tokens", () => {
+    expect(
+      extractTokenUsage({
+        cache_creation_input_tokens: 6,
+        cache_read_input_tokens: 14,
+        input_tokens: 30,
+        output_tokens: 9,
+      }),
+    ).toEqual({
+      cachedTokens: 14,
+      completionTokens: 9,
+      promptTokens: 30,
+      totalTokens: 39,
+    });
+  });
+
   it("derives total tokens when absent and returns undefined for empty usage", () => {
     expect(extractTokenUsage({ completion_tokens: 4, prompt_tokens: 6 })).toMatchObject({
       totalTokens: 10,

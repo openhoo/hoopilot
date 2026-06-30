@@ -33,9 +33,10 @@ export class AnthropicCompatibilityError extends Error {
 }
 
 export function anthropicMessagesToResponsesRequest(request: JsonObject): JsonObject {
-  return removeUndefined({
-    input: anthropicMessagesToResponsesInput(request.messages),
-    instructions: anthropicSystemToInstructions(request.system),
+  const system = anthropicSystemToResponses(request.system);
+  const response = removeUndefined({
+    input: [...system.input, ...anthropicMessagesToResponsesInput(request.messages)],
+    instructions: system.instructions,
     max_output_tokens:
       typeof request.max_tokens === "number" && Number.isFinite(request.max_tokens)
         ? request.max_tokens
@@ -51,6 +52,8 @@ export function anthropicMessagesToResponsesRequest(request: JsonObject): JsonOb
     tools: anthropicTools(request.tools),
     top_p: request.top_p,
   });
+  applyCacheControlToLastBlock(response, anthropicCacheControl(request.cache_control));
+  return response;
 }
 
 export function responsesResponseToAnthropicMessage(
@@ -169,6 +172,7 @@ function anthropicMessagesToResponsesInput(messages: unknown): JsonObject[] {
   }
 
   const input: JsonObject[] = [];
+  let fallbackToolCallIndex = 0;
   for (const message of messages) {
     const record = asRecord(message);
     const role = anthropicRole(record.role);
@@ -191,10 +195,13 @@ function anthropicMessagesToResponsesInput(messages: unknown): JsonObject[] {
       if (type === "text") {
         const text = textValue(part.text);
         if (text) {
-          messageParts.push({
-            text,
-            type: role === "assistant" ? "output_text" : "input_text",
-          });
+          messageParts.push(
+            removeUndefined({
+              cache_control: anthropicCacheControl(part.cache_control),
+              text,
+              type: role === "assistant" ? "output_text" : "input_text",
+            }),
+          );
         }
         continue;
       }
@@ -209,21 +216,27 @@ function anthropicMessagesToResponsesInput(messages: unknown): JsonObject[] {
       }
       if (type === "tool_use") {
         flushMessage();
-        input.push({
-          arguments: JSON.stringify(asRecord(part.input)),
-          call_id: textValue(part.id) || `call_${randomId()}`,
-          name: textValue(part.name),
-          type: "function_call",
-        });
+        input.push(
+          removeUndefined({
+            arguments: JSON.stringify(asRecord(part.input)),
+            cache_control: anthropicCacheControl(part.cache_control),
+            call_id: textValue(part.id) || `call_hoopilot_${fallbackToolCallIndex++}`,
+            name: textValue(part.name),
+            type: "function_call",
+          }),
+        );
         continue;
       }
       if (type === "tool_result") {
         flushMessage();
-        input.push({
-          call_id: textValue(part.tool_use_id),
-          output: anthropicToolResultOutput(part.content),
-          type: "function_call_output",
-        });
+        input.push(
+          removeUndefined({
+            cache_control: anthropicCacheControl(part.cache_control),
+            call_id: textValue(part.tool_use_id),
+            output: anthropicToolResultOutput(part.content),
+            type: "function_call_output",
+          }),
+        );
         continue;
       }
       if (type === "thinking" || type === "redacted_thinking") {
@@ -273,22 +286,24 @@ function anthropicImageToResponsesPart(part: JsonObject): JsonObject {
     if (!data) {
       throw new AnthropicCompatibilityError("Anthropic base64 image content requires source.data.");
     }
-    return {
+    return removeUndefined({
+      cache_control: anthropicCacheControl(part.cache_control),
       detail: "auto",
       image_url: `data:${mediaType};base64,${data}`,
       type: "input_image",
-    };
+    });
   }
   if (sourceType === "url") {
     const url = textValue(source.url);
     if (!url) {
       throw new AnthropicCompatibilityError("Anthropic URL image content requires source.url.");
     }
-    return {
+    return removeUndefined({
+      cache_control: anthropicCacheControl(part.cache_control),
       detail: "auto",
       image_url: url,
       type: "input_image",
-    };
+    });
   }
   throw new AnthropicCompatibilityError(
     `Anthropic image source type "${sourceType || "unknown"}" is not supported.`,
@@ -314,18 +329,51 @@ function anthropicToolResultOutput(content: unknown): string {
   return typeof content === "object" ? JSON.stringify(content) : String(content);
 }
 
-function anthropicSystemToInstructions(system: unknown): string | undefined {
+function anthropicSystemToResponses(system: unknown): {
+  input: JsonObject[];
+  instructions?: string;
+} {
   if (typeof system === "string") {
-    return system || undefined;
+    return { input: [], instructions: system || undefined };
   }
   if (!Array.isArray(system)) {
-    return undefined;
+    return { input: [] };
   }
-  const text = system
-    .map((part) => textValue(asRecord(part).text) || textValue(part))
+  const parts = system
+    .map((part) => anthropicSystemPartToResponsesPart(part))
+    .filter((part): part is JsonObject => part !== undefined);
+  if (parts.length === 0) {
+    return { input: [] };
+  }
+  if (parts.some((part) => part.cache_control !== undefined)) {
+    return {
+      input: [
+        {
+          content: parts,
+          role: "system",
+          type: "message",
+        },
+      ],
+    };
+  }
+  const text = parts
+    .map((part) => textValue(part.text))
     .filter(Boolean)
     .join("\n");
-  return text || undefined;
+  return { input: [], instructions: text || undefined };
+}
+
+function anthropicSystemPartToResponsesPart(part: unknown): JsonObject | undefined {
+  const record = asRecord(part);
+  const text = textValue(record.text) || textValue(part);
+  if (!text) {
+    return undefined;
+  }
+  return removeUndefined({
+    cache_control: anthropicCacheControl(record.cache_control),
+    text,
+    type: "input_text",
+  });
 }
 
 function anthropicTools(tools: unknown): JsonObject[] | undefined {
@@ -335,6 +383,7 @@ function anthropicTools(tools: unknown): JsonObject[] | undefined {
   const converted = tools.map((tool) => {
     const record = asRecord(tool);
     return removeUndefined({
+      cache_control: anthropicCacheControl(record.cache_control),
       description: record.description,
       name: record.name,
       parameters: record.input_schema,
@@ -343,6 +392,60 @@ function anthropicTools(tools: unknown): JsonObject[] | undefined {
     });
   });
   return converted.length > 0 ? converted : undefined;
+}
+
+function anthropicCacheControl(value: unknown): JsonObject | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const record = asRecord(value);
+  const type = textValue(record.type);
+  if (type !== "ephemeral") {
+    throw new AnthropicCompatibilityError(
+      `Anthropic cache_control type "${type || "unknown"}" is not supported.`,
+    );
+  }
+  const ttl = textValue(record.ttl);
+  if (ttl && ttl !== "5m" && ttl !== "1h") {
+    throw new AnthropicCompatibilityError(`Anthropic cache_control ttl "${ttl}" is not supported.`);
+  }
+  return removeUndefined({
+    ttl: ttl || undefined,
+    type,
+  });
+}
+
+function applyCacheControlToLastBlock(request: JsonObject, cacheControl: JsonObject | undefined) {
+  if (!cacheControl) {
+    return;
+  }
+  const input = Array.isArray(request.input) ? request.input : [];
+  for (let itemIndex = input.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = asRecord(input[itemIndex]);
+    const content = Array.isArray(item.content) ? item.content : [];
+    for (let partIndex = content.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = asRecord(content[partIndex]);
+      if (part.cache_control === undefined && isCacheableResponsesPart(part)) {
+        part.cache_control = cacheControl;
+        return;
+      }
+    }
+  }
+  const tools = Array.isArray(request.tools) ? request.tools : [];
+  for (let index = tools.length - 1; index >= 0; index -= 1) {
+    const tool = asRecord(tools[index]);
+    if (tool.cache_control === undefined) {
+      tool.cache_control = cacheControl;
+      return;
+    }
+  }
+}
+
+function isCacheableResponsesPart(part: JsonObject): boolean {
+  const type = textValue(part.type);
+  return (
+    type === "input_text" || type === "output_text" || type === "text" || type === "input_image"
+  );
 }
 
 function anthropicToolChoice(toolChoice: unknown): unknown {

@@ -337,26 +337,28 @@ describe("responsesCompactionResult", () => {
   });
 
   it("builds an explicit Copilot summary request for compaction inputs", () => {
-    const body = JSON.parse(
-      responsesCompactionRequestBody({
-        input: [
-          { content: [{ text: "old", type: "input_text" }], role: "user", type: "message" },
-          { type: "compaction_trigger" },
-        ],
-        model: "gpt-5.5",
-        stream: true,
-        tools: [{ name: "shell", type: "function" }],
-      }),
-    );
+    const request = {
+      input: [
+        { content: [{ text: "old", type: "input_text" }], role: "user", type: "message" },
+        { type: "compaction_trigger" },
+      ],
+      model: "gpt-5.5",
+      stream: true,
+      tools: [{ name: "shell", type: "function" }],
+    };
+    const bodyText = responsesCompactionRequestBody(request);
+    const body = JSON.parse(bodyText);
 
     expect(body.stream).toBe(false);
     expect(body.tools).toEqual([]);
+    expect(responsesCompactionRequestBody(request)).toBe(bodyText);
     expect(body.input).toHaveLength(2);
     expect(body.input.at(-1)).toMatchObject({
       content: [expect.objectContaining({ text: expect.stringContaining("CONTEXT CHECKPOINT") })],
       role: "user",
       type: "message",
     });
+    expect(body.input.at(-1).id).toBeUndefined();
     expect(body.input.some((item: { type?: string }) => item.type === "compaction_trigger")).toBe(
       false,
     );
@@ -372,12 +374,15 @@ describe("responsesCompactionResult", () => {
     };
 
     expect(isResponsesCompactionRequest(request)).toBe(true);
-    const body = JSON.parse(normalizeResponsesRequestForCopilotBody(request));
+    const bodyText = normalizeResponsesRequestForCopilotBody(request);
+    const body = JSON.parse(bodyText);
+    expect(normalizeResponsesRequestForCopilotBody(request)).toBe(bodyText);
     expect(body.input[0]).toMatchObject({
       content: [expect.objectContaining({ text: expect.stringContaining("prior summary") })],
       role: "user",
       type: "message",
     });
+    expect(body.input[0].id).toBeUndefined();
   });
 
   it("emits exactly one v2 compaction output item", () => {

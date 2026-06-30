@@ -173,6 +173,104 @@ describe("anthropicMessagesToResponsesRequest", () => {
     });
   });
 
+  it("preserves explicit Anthropic cache controls without adding its own", () => {
+    const response = anthropicMessagesToResponsesRequest({
+      cache_control: { type: "ephemeral", ttl: "5m" },
+      max_tokens: 16,
+      messages: [
+        {
+          content: [
+            {
+              cache_control: { type: "ephemeral" },
+              text: "stable workspace context",
+              type: "text",
+            },
+            { text: "fresh request", type: "text" },
+          ],
+          role: "user",
+        },
+      ],
+      model: "claude-sonnet-4.5",
+      system: [
+        {
+          cache_control: { type: "ephemeral", ttl: "1h" },
+          text: "Long-lived system context",
+          type: "text",
+        },
+      ],
+      tools: [
+        {
+          cache_control: { type: "ephemeral", ttl: "5m" },
+          input_schema: { type: "object" },
+          name: "lookup",
+        },
+      ],
+    });
+
+    expect(response.instructions).toBeUndefined();
+    expect(response.input).toEqual([
+      {
+        content: [
+          {
+            cache_control: { ttl: "1h", type: "ephemeral" },
+            text: "Long-lived system context",
+            type: "input_text",
+          },
+        ],
+        role: "system",
+        type: "message",
+      },
+      {
+        content: [
+          {
+            cache_control: { type: "ephemeral" },
+            text: "stable workspace context",
+            type: "input_text",
+          },
+          {
+            cache_control: { ttl: "5m", type: "ephemeral" },
+            text: "fresh request",
+            type: "input_text",
+          },
+        ],
+        role: "user",
+        type: "message",
+      },
+    ]);
+    expect(response.tools).toEqual([
+      {
+        cache_control: { ttl: "5m", type: "ephemeral" },
+        name: "lookup",
+        parameters: { type: "object" },
+        type: "function",
+      },
+    ]);
+  });
+
+  it("uses stable fallback tool call ids so converted history stays cacheable", () => {
+    const request = {
+      messages: [
+        {
+          content: { input: { query: "answer" }, name: "lookup", type: "tool_use" },
+          role: "assistant",
+        },
+      ],
+      model: "claude-sonnet-4.5",
+    };
+
+    expect(anthropicMessagesToResponsesRequest(request)).toEqual(
+      anthropicMessagesToResponsesRequest(request),
+    );
+    expect(anthropicMessagesToResponsesRequest(request).input).toEqual([
+      {
+        arguments: '{"query":"answer"}',
+        call_id: "call_hoopilot_0",
+        name: "lookup",
+        type: "function_call",
+      },
+    ]);
+  });
+
   it("rejects unsupported Anthropic request shapes before proxying", () => {
     const invalidRequests = [
       {
@@ -218,6 +316,13 @@ describe("anthropicMessagesToResponsesRequest", () => {
       {
         message: 'tool_choice type "weird"',
         request: { messages: [{ content: "hi", role: "user" }], tool_choice: { type: "weird" } },
+      },
+      {
+        message: 'cache_control ttl "24h"',
+        request: {
+          cache_control: { ttl: "24h", type: "ephemeral" },
+          messages: [{ content: "hi", role: "user" }],
+        },
       },
     ];
 

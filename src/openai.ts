@@ -146,7 +146,7 @@ export function chatCompletionToResponse(completion: JsonObject, responseId?: st
  */
 export function responsesCompactionResult(upstreamText: string, isSse: boolean): JsonObject {
   const summary = compactionSummaryText(upstreamText, isSse);
-  return { output: [compactionSummaryMessageItem(summary)] };
+  return { output: [compactionSummaryOutputMessageItem(summary)] };
 }
 
 export function isResponsesCompactionRequest(request: JsonObject): boolean {
@@ -873,8 +873,16 @@ function messageOutputItem(text: string, id = `msg_${randomId()}`): JsonObject {
   };
 }
 
-function compactionSummaryMessageItem(text: string, id = `msg_${randomId()}`): JsonObject {
-  return {
+function compactionSummaryOutputMessageItem(text: string): JsonObject {
+  return compactionSummaryMessageItem(text, `msg_${randomId()}`);
+}
+
+function compactionSummaryInputMessageItem(text: string): JsonObject {
+  return compactionSummaryMessageItem(text);
+}
+
+function compactionSummaryMessageItem(text: string, id?: string): JsonObject {
+  return removeUndefined({
     content: [
       {
         text: `${COMPACTION_SUMMARY_PREFIX}\n${text}`,
@@ -884,7 +892,7 @@ function compactionSummaryMessageItem(text: string, id = `msg_${randomId()}`): J
     id,
     role: "user",
     type: "message",
-  };
+  });
 }
 
 function compactionOutputItem(text: string, id = `cmpct_${randomId()}`): JsonObject {
@@ -914,7 +922,7 @@ function normalizeCompactionInputForCopilot(
     if (type === "compaction" || type === "compaction_summary" || type === "context_compaction") {
       const text = contentToText(record.encrypted_content);
       if (text) {
-        normalized.push(compactionSummaryMessageItem(text));
+        normalized.push(compactionSummaryInputMessageItem(text));
       }
       continue;
     }
@@ -1022,6 +1030,7 @@ export function extractTokenUsage(usage: unknown): TokenUsage | undefined {
     asRecord(record.output_tokens_details).reasoning_tokens,
   );
   const cached = firstNumber(
+    record.cache_read_input_tokens,
     asRecord(record.prompt_tokens_details).cached_tokens,
     asRecord(record.input_tokens_details).cached_tokens,
   );
