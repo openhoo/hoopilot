@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.10 (2026-06-30)
+
+### Bug Fixes
+
+- polish proxy validation and header handling (db4bf71)
+
 ## 2.1.9 (2026-06-30)
 
 ### Performance
