@@ -97,6 +97,8 @@ jobs:
           trap cleanup EXIT
 
           printf '{"token":"oauth-token","apiBaseUrl":"http://127.0.0.1:%s"}\n' "$mock_port" > "$tmpdir/auth.json"
+          chmod 755 "$tmpdir"
+          chmod 644 "$tmpdir/auth.json"
           node -e "require('node:http').createServer((req,res)=>{if(req.url==='/models'){if(req.headers.authorization!=='Bearer oauth-token'){res.statusCode=401;res.end('unauthorized');return;}res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'ci-smoke-model',object:'model'}]}));return;}res.statusCode=404;res.end('not found');}).listen($mock_port,'127.0.0.1');" &
           mock_pid="$!"
           mock_ok=0
