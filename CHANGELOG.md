@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.2 (2026-06-30)
+
+### Bug Fixes
+
+- handle Codex responses compaction (19d7444)
+
 ## 2.1.1 (2026-06-24)
 
 ### Bug Fixes
