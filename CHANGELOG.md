@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.3 (2026-06-30)
+
+### Bug Fixes
+
+- preserve input cache behavior (174a24c)
+
 ## 2.1.2 (2026-06-30)
 
 ### Bug Fixes
