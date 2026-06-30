@@ -15,6 +15,7 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
 const DEFAULT_CODEX_BIN = "codex";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_REASONING_EFFORT = "xhigh";
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const PROXY_ENV_KEYS = [
   "ALL_PROXY",
   "HTTPS_PROXY",
@@ -48,13 +49,18 @@ export function buildCodexxInvocation(
   const command = envValue(env.CODEXX_CODEX_BIN) ?? DEFAULT_CODEX_BIN;
   const model = envValue(env.CODEXX_MODEL) ?? DEFAULT_MODEL;
   const reasoningEffort = envValue(env.CODEXX_MODEL_REASONING_EFFORT) ?? DEFAULT_REASONING_EFFORT;
-  const providerConfig = [
+  const streamIdleTimeoutMs = parseStreamIdleTimeoutMs(env.CODEXX_STREAM_IDLE_TIMEOUT_MS);
+  const providerConfigParts = [
     '{ name = "Hoopilot"',
     `base_url = ${JSON.stringify(baseUrl)}`,
     'env_key = "OPENAI_API_KEY"',
     'wire_api = "responses"',
-    "supports_websockets = false }",
-  ].join(", ");
+    "supports_websockets = false",
+  ];
+  if (streamIdleTimeoutMs > 0) {
+    providerConfigParts.push(`stream_idle_timeout_ms = ${streamIdleTimeoutMs}`);
+  }
+  const providerConfig = `${providerConfigParts.join(", ")} }`;
 
   return {
     args: [
@@ -96,6 +102,18 @@ export function buildCodexxInvocation(
 // a keyed server rejects it with a 401, which the model preflight surfaces.
 function generateEphemeralApiKey(): string {
   return `codexx-${crypto.randomUUID()}`;
+}
+
+function parseStreamIdleTimeoutMs(rawValue: string | undefined): number {
+  const raw = envValue(rawValue);
+  if (raw === undefined) {
+    return DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("CODEXX_STREAM_IDLE_TIMEOUT_MS must be a non-negative integer.");
+  }
+  return value;
 }
 
 function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -194,6 +212,9 @@ Environment:
   CODEXX_MODEL         Codex model to use. Default: ${DEFAULT_MODEL}
   CODEXX_MODEL_REASONING_EFFORT
                        Codex reasoning effort. Default: ${DEFAULT_REASONING_EFFORT}
+  CODEXX_STREAM_IDLE_TIMEOUT_MS
+                       Codex Responses stream idle timeout in milliseconds. Default:
+                       ${DEFAULT_STREAM_IDLE_TIMEOUT_MS}; set 0 to use Codex's own default.
   CODEXX_SKIP_MODEL_PREFLIGHT
                        Set to 1 to skip checking /v1/models before starting Codex.
 

@@ -250,6 +250,8 @@ With the [keyless Docker quick start](#keyless-local-quick-start), no key is inv
 
 `codexx` does not start Hoopilot and does not alter your shell environment. It starts `codex` with a temporary `hoopilot` model provider pointed at `http://127.0.0.1:4141/v1`, uses the Responses API wire format, disables Responses WebSockets for that provider, maps `HOOPILOT_API_KEY` (or a random throwaway key when none is set) to `OPENAI_API_KEY` for the child process, disables Codex's managed network proxy (`-c permissions.workspace.network.enabled=false`), and removes standard proxy variables from the spawned Codex process.
 
+`codexx` also sets Codex's temporary provider stream idle timeout to 120 seconds by default, so a silent Responses stream fails and Codex's normal stream retry path can run instead of leaving the turn apparently stuck. Override with `CODEXX_STREAM_IDLE_TIMEOUT_MS`, or set it to `0` to use Codex's own default.
+
 > **Why the network proxy is disabled.** Codex ships a managed network proxy that routes the agent's traffic through a local proxy (port `3128`) and enforces a domain allowlist. Because the local Hoopilot server isn't on that allowlist, leaving the proxy on makes Codex's request to Hoopilot fail with an instant `403` Squid error. The proxy has two independent gates — the `network_proxy` feature flag and the `permissions.workspace.network.enabled` config — and disabling only the feature is not always enough, so `codexx` turns off both (`--disable network_proxy` and `-c permissions.workspace.network.enabled=false`) and requests reach Hoopilot directly.
 
 `codexx` defaults to `gpt-5.5` with `model_reasoning_effort="xhigh"`. Before starting Codex, it checks `/v1/models` and reports if the logged-in Copilot account does not advertise the requested model. Set `CODEXX_MODEL` to one of the listed models, or log in with a Copilot account that has access to the default model.
@@ -387,6 +389,8 @@ Logging and update settings:
 | --- | --- |
 | `HOOPILOT_LOG_LEVEL` / `--log-level` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`. Default: `info`. |
 | `HOOPILOT_LOG_FORMAT` / `--log-format` | `pretty` or `json`. Default: `pretty`. |
+| `HOOPILOT_UPSTREAM_TIMEOUT_MS` | Time to wait for Copilot response headers before returning `504 copilot_timeout`. Default: `120000`; set `0` to disable. |
+| `HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS` | Time to wait for bytes on a Copilot response body before failing the stream so clients can retry. Default: `120000`; set `0` to disable. |
 | `HOOPILOT_NO_UPDATE_CHECK` / `--no-update-check` | Disable background update checks. `NO_UPDATE_NOTIFIER` is also honored. |
 
 `codexx` settings:
@@ -398,6 +402,7 @@ Logging and update settings:
 | `CODEXX_CODEX_BIN` | Codex executable to run. Default: `codex`. |
 | `CODEXX_MODEL` | Codex model to use. Default: `gpt-5.5`. |
 | `CODEXX_MODEL_REASONING_EFFORT` | Codex reasoning effort. Default: `xhigh`. |
+| `CODEXX_STREAM_IDLE_TIMEOUT_MS` | Codex Responses stream idle timeout for the temporary Hoopilot provider. Default: `120000`; set `0` to use Codex's own default. |
 | `CODEXX_SKIP_MODEL_PREFLIGHT=1` | Skip the `/v1/models` availability check before starting Codex. |
 
 ## CLI reference

@@ -45,6 +45,8 @@ export interface CopilotAuthOptions {
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
   githubApiBaseUrl?: string;
+  upstreamStreamIdleTimeoutMs?: number;
+  upstreamTimeoutMs?: number;
 }
 
 export interface CopilotAccess {

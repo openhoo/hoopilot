@@ -9,7 +9,12 @@ import {
   responsesStreamToAnthropicStream,
 } from "./anthropic";
 import { CopilotAuthError } from "./auth";
-import { CopilotClient, normalizeCopilotUsage, parseRateLimitHeaders } from "./copilot";
+import {
+  CopilotClient,
+  CopilotUpstreamTimeoutError,
+  normalizeCopilotUsage,
+  parseRateLimitHeaders,
+} from "./copilot";
 import { DASHBOARD_HTML } from "./dashboard";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
@@ -342,6 +347,13 @@ function buildApp(deps: ServerDeps) {
             "request body exceeded size limit",
           );
           return jsonError(413, "request_too_large", message);
+        }
+        if (error instanceof CopilotUpstreamTimeoutError) {
+          logger.warn(
+            { err: errorDetails(error), event: "copilot.request.timeout" },
+            "copilot upstream request timed out",
+          );
+          return jsonError(504, "copilot_timeout", message);
         }
         logger.error({ err: errorDetails(error), event: "http.request.failed" }, "request failed");
         return jsonError(500, "internal_error", message);

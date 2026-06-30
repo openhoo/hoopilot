@@ -526,6 +526,56 @@ describe("createHoopilotHandler", () => {
     await expect(response.text()).resolves.toContain('"delta":"ok"');
   });
 
+  it("returns a timeout error when Copilot does not send response headers", async () => {
+    const handler = createHoopilotHandler({
+      ...oauthOptions(
+        async (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason ?? new Error("aborted")),
+              { once: true },
+            );
+          }),
+      ),
+      upstreamTimeoutMs: 5,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({ input: "hello", model: "gpt-4.1", stream: true }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "copilot_timeout" },
+    });
+  });
+
+  it("fails an idle upstream SSE body so Codex can retry", async () => {
+    const handler = createHoopilotHandler({
+      ...oauthOptions(
+        async () =>
+          new Response(new ReadableStream<Uint8Array>(), {
+            headers: { "content-type": "text/event-stream" },
+          }),
+      ),
+      upstreamStreamIdleTimeoutMs: 5,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({ input: "hello", model: "gpt-4.1", stream: true }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).rejects.toThrow("Copilot upstream stream was idle");
+  });
+
   it("serves Claude Code Messages requests through Copilot Responses", async () => {
     const upstreamRequests: Request[] = [];
     const handler = createHoopilotHandler(
@@ -1717,6 +1767,107 @@ describe("Elysia routing layer", () => {
         message: "blocked cross-origin browser request",
       }),
     );
+  });
+});
+
+describe("CopilotClient timeout handling", () => {
+  it("cancels wrapped upstream bodies when the caller cancels", async () => {
+    const cancelReasons: unknown[] = [];
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel(reason) {
+              cancelReasons.push(reason);
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      upstreamStreamIdleTimeoutMs: 1_000,
+    });
+
+    const response = await client.responses(
+      JSON.stringify({ input: "hello", model: "gpt-4.1", stream: true }),
+    );
+
+    await response.body?.cancel("client done");
+    expect(cancelReasons).toEqual(["client done"]);
+  });
+
+  it("can disable upstream request and stream idle timeouts", async () => {
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {
+        HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS: "0",
+        HOOPILOT_UPSTREAM_TIMEOUT_MS: "0",
+      },
+      fetch: async (_input, init) => {
+        expect(init?.signal).toBeUndefined();
+        return Response.json({ data: [{ id: "gpt-4.1" }] });
+      },
+    });
+
+    const response = await client.models();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: [{ id: "gpt-4.1" }] });
+  });
+
+  it("propagates caller aborts to upstream fetches", async () => {
+    const controller = new AbortController();
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async (_input, init) => {
+        queueMicrotask(() => controller.abort(new Error("client stopped")));
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason ?? new Error("aborted")),
+            { once: true },
+          );
+        });
+      },
+      upstreamTimeoutMs: 1_000,
+    });
+
+    await expect(client.models(controller.signal)).rejects.toThrow("client stopped");
+  });
+
+  it("forwards upstream body read errors through the wrapped stream", async () => {
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new Error("source broke"));
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      upstreamStreamIdleTimeoutMs: 1_000,
+    });
+
+    const response = await client.responses(
+      JSON.stringify({ input: "hello", model: "gpt-4.1", stream: true }),
+    );
+
+    await expect(response.text()).rejects.toThrow("source broke");
+  });
+
+  it("rejects invalid upstream timeout configuration", () => {
+    expect(
+      () =>
+        new CopilotClient({
+          authStorePath: tempAuthPath(),
+          env: { HOOPILOT_UPSTREAM_TIMEOUT_MS: "later" },
+          fetch: unusedFetch,
+        }),
+    ).toThrow("HOOPILOT_UPSTREAM_TIMEOUT_MS");
   });
 });
 

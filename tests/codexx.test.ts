@@ -23,7 +23,7 @@ describe("buildCodexxInvocation", () => {
       "-c",
       'model_provider="hoopilot"',
       "-c",
-      'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
+      'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false, stream_idle_timeout_ms = 120000 }',
       "-m",
       "gpt-5.5",
       "-c",
@@ -45,6 +45,7 @@ describe("buildCodexxInvocation", () => {
       CODEXX_CODEX_BIN: "/tmp/codex",
       CODEXX_MODEL: "claude-sonnet-4.6",
       CODEXX_MODEL_REASONING_EFFORT: "high",
+      CODEXX_STREAM_IDLE_TIMEOUT_MS: "45000",
     });
 
     expect(invocation.command).toBe("/tmp/codex");
@@ -58,7 +59,7 @@ describe("buildCodexxInvocation", () => {
       "-c",
       'model_provider="hoopilot"',
       "-c",
-      'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:5151/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
+      'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:5151/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false, stream_idle_timeout_ms = 45000 }',
       "-m",
       "claude-sonnet-4.6",
       "-c",
@@ -67,6 +68,24 @@ describe("buildCodexxInvocation", () => {
       "status",
     ]);
     expect(invocation.env.OPENAI_API_KEY).toBe("override-key");
+  });
+
+  it("can leave the Codex stream idle timeout at Codex's own default", () => {
+    const invocation = buildCodexxInvocation([], {
+      CODEXX_STREAM_IDLE_TIMEOUT_MS: "0",
+    });
+
+    expect(invocation.args).toContain(
+      'model_providers.hoopilot={ name = "Hoopilot", base_url = "http://127.0.0.1:4141/v1", env_key = "OPENAI_API_KEY", wire_api = "responses", supports_websockets = false }',
+    );
+  });
+
+  it("rejects invalid Codex stream idle timeout overrides", () => {
+    expect(() =>
+      buildCodexxInvocation([], {
+        CODEXX_STREAM_IDLE_TIMEOUT_MS: "soon",
+      }),
+    ).toThrow("CODEXX_STREAM_IDLE_TIMEOUT_MS");
   });
 
   it("does not reuse an ambient OpenAI API key as the local Hoopilot key", async () => {

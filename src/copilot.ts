@@ -33,6 +33,15 @@ export const COPILOT_USAGE_API_VERSION = "2025-04-01";
 const EDITOR_PLUGIN_VERSION = "hoopilot/0.1.0";
 const EDITOR_VERSION = "Hoopilot/0.1.0";
 const HOOPILOT_USER_AGENT = "hoopilot/0.1.0";
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 120_000;
+const DEFAULT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+export class CopilotUpstreamTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CopilotUpstreamTimeoutError";
+  }
+}
 
 /**
  * Set the GitHub Copilot API request headers on `headers`, leaving any
@@ -122,6 +131,8 @@ export class CopilotClient {
   readonly #allowUnsafeUpstream: boolean;
   readonly #fetch: FetchLike;
   readonly #githubApiBaseUrl: string;
+  readonly #upstreamStreamIdleTimeoutMs: number;
+  readonly #upstreamTimeoutMs: number;
 
   constructor(options: CopilotAuthOptions = {}) {
     this.#auth = new CopilotAuth(options);
@@ -131,6 +142,18 @@ export class CopilotClient {
       options.githubApiBaseUrl ??
         envValue(options.env?.HOOPILOT_GITHUB_API_BASE_URL) ??
         DEFAULT_GITHUB_API_BASE_URL,
+    );
+    this.#upstreamTimeoutMs = parseTimeoutMs(
+      options.upstreamTimeoutMs,
+      options.env?.HOOPILOT_UPSTREAM_TIMEOUT_MS,
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      "HOOPILOT_UPSTREAM_TIMEOUT_MS",
+    );
+    this.#upstreamStreamIdleTimeoutMs = parseTimeoutMs(
+      options.upstreamStreamIdleTimeoutMs,
+      options.env?.HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS,
+      DEFAULT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS,
+      "HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS",
     );
   }
 
@@ -156,7 +179,7 @@ export class CopilotClient {
     }
     const access = await this.#auth.getAccess();
     const headers = applyGithubApiHeaders(new Headers(), access.token);
-    return this.#fetch(`${this.#githubApiBaseUrl}/copilot_internal/user`, {
+    return this.#fetchWithTimeout(`${this.#githubApiBaseUrl}/copilot_internal/user`, {
       headers,
       method: "GET",
       signal,
@@ -210,11 +233,159 @@ export class CopilotClient {
     }
     const headers = applyCopilotHeaders(new Headers(init.headers), access.token);
 
-    return this.#fetch(`${access.apiBaseUrl}${path}`, {
+    return this.#fetchWithTimeout(`${access.apiBaseUrl}${path}`, {
       ...init,
       headers,
     });
   }
+
+  async #fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
+    const timeout = abortSignalWithTimeout(init.signal ?? undefined, this.#upstreamTimeoutMs);
+    try {
+      const response = await this.#fetch(input, {
+        ...init,
+        signal: timeout.signal,
+      });
+      return responseWithStreamIdleTimeout(response, this.#upstreamStreamIdleTimeoutMs, input);
+    } catch (error) {
+      if (timeout.timedOut()) {
+        throw new CopilotUpstreamTimeoutError(
+          `Copilot upstream request timed out after ${this.#upstreamTimeoutMs} ms before response headers arrived.`,
+        );
+      }
+      throw error;
+    } finally {
+      timeout.cleanup();
+    }
+  }
+}
+
+function parseTimeoutMs(
+  optionValue: number | undefined,
+  envRaw: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const raw = optionValue ?? envValue(envRaw);
+  if (raw === undefined) {
+    return fallback;
+  }
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer number of milliseconds.`);
+  }
+  return value;
+}
+
+function abortSignalWithTimeout(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+): { cleanup: () => void; signal: AbortSignal | undefined; timedOut: () => boolean } {
+  if (timeoutMs === 0) {
+    return { cleanup: () => {}, signal: parent, timedOut: () => false };
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    timedOut = true;
+    controller.abort(
+      new CopilotUpstreamTimeoutError(`Copilot upstream request timed out after ${timeoutMs} ms.`),
+    );
+  }, timeoutMs);
+  const onAbort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) {
+    controller.abort(parent.reason);
+  } else {
+    parent?.addEventListener("abort", onAbort, { once: true });
+  }
+
+  return {
+    cleanup: () => {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", onAbort);
+    },
+    signal: controller.signal,
+    timedOut: () => timedOut,
+  };
+}
+
+function responseWithStreamIdleTimeout(
+  response: Response,
+  idleTimeoutMs: number,
+  input: string,
+): Response {
+  if (!response.body || idleTimeoutMs === 0) {
+    return response;
+  }
+  return new Response(streamWithIdleTimeout(response.body, idleTimeoutMs, input), {
+    headers: response.headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
+function streamWithIdleTimeout(
+  body: ReadableStream<Uint8Array>,
+  idleTimeoutMs: number,
+  input: string,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      reader.releaseLock();
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const read = reader.read();
+      read.catch(() => {});
+      try {
+        const result = await Promise.race([
+          read,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              reject(
+                new CopilotUpstreamTimeoutError(
+                  `Copilot upstream stream was idle for ${idleTimeoutMs} ms while reading ${input}.`,
+                ),
+              );
+            }, idleTimeoutMs);
+          }),
+        ]);
+        if (timer) {
+          clearTimeout(timer);
+        }
+        if (result.done) {
+          controller.close();
+          release();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        await reader.cancel(error).catch(() => {});
+        controller.error(error);
+        release();
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
 }
 
 /**
