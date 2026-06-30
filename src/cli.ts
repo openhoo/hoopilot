@@ -52,6 +52,8 @@ type DeviceLogin = (
   options: GithubCopilotDeviceLoginOptions,
 ) => Promise<GithubCopilotDeviceLoginResult>;
 
+const COPILOT_VERIFY_TIMEOUT_MS = 15_000;
+
 interface RunLoginOptions extends HoopilotServerOptions {
   deviceLogin?: DeviceLogin;
   printToken?: boolean;
@@ -61,6 +63,7 @@ interface VerifyCopilotOAuthTokenOptions {
   copilotApiBaseUrl?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
+  verifyTimeoutMs?: number;
 }
 
 export async function main(argv = Bun.argv.slice(2)): Promise<void> {
@@ -445,6 +448,7 @@ export async function verifyCopilotOAuthToken(
   const response = await fetcher(`${apiBaseUrl}/models`, {
     headers: applyCopilotHeaders(new Headers(), token),
     method: "GET",
+    signal: AbortSignal.timeout(options.verifyTimeoutMs ?? COPILOT_VERIFY_TIMEOUT_MS),
   });
 
   if (!response.ok) {

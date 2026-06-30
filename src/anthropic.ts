@@ -1,4 +1,5 @@
 import { normalizeRequestedModel } from "./openai";
+import { encodeSseEvent, parseSseBlock } from "./sse";
 import type { JsonObject } from "./types";
 import { asRecord, firstNumber, parseJsonObject, randomId, removeUndefined } from "./util";
 
@@ -86,7 +87,7 @@ export function responsesStreamToAnthropicStream(
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueue = (event: string, data: JsonObject) => {
-        controller.enqueue(encoder.encode(encodeSse(event, data)));
+        controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
       };
       const reader = stream.getReader();
       try {
@@ -125,7 +126,7 @@ export function responsesSseTextToAnthropicSseText(
   const chunks: string[] = [];
   const state = createAnthropicStreamState(options);
   const enqueue = (event: string, data: JsonObject) => {
-    chunks.push(encodeSse(event, data));
+    chunks.push(encodeSseEvent(event, data));
   };
 
   for (const block of text.split(/\r?\n\r?\n/)) {
@@ -777,20 +778,6 @@ function stopBlock(block: StreamBlock, enqueue: (event: string, data: JsonObject
   });
 }
 
-function parseSseBlock(block: string): { data: string; event: string } {
-  let event = "message";
-  const data: string[] = [];
-  for (const line of block.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("event:")) {
-      event = trimmed.slice("event:".length).trim() || event;
-    } else if (trimmed.startsWith("data:")) {
-      data.push(trimmed.slice("data:".length).trim());
-    }
-  }
-  return { data: data.join("\n"), event };
-}
-
 function parseToolInput(argumentsText: string): JsonObject {
   const parsed = parseJsonObject(argumentsText);
   return parsed ?? {};
@@ -827,8 +814,4 @@ function textValue(value: unknown): string {
 
 function indexValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function encodeSse(event: string, data: JsonObject): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }

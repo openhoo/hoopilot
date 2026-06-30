@@ -1,3 +1,5 @@
+import { DEFAULT_MODEL } from "./defaults";
+import { encodeSseData, encodeSseEvent, parseSseBlock, sseDataFromLine } from "./sse";
 import type { JsonObject, TokenUsage } from "./types";
 import {
   asRecord,
@@ -8,7 +10,7 @@ import {
   safeJsonParse,
 } from "./util";
 
-export const DEFAULT_MODEL = "gpt-4.1";
+export { DEFAULT_MODEL };
 
 interface ResponseStreamOptions {
   model: string;
@@ -228,7 +230,7 @@ export function responsesCompactionSseText(
   const createdAt = epochSeconds();
   let sequenceNumber = 0;
   const event = (name: string, data: JsonObject | "[DONE]") =>
-    encodeSse(name, data === "[DONE]" ? data : { ...data, sequence_number: sequenceNumber++ });
+    encodeSseEvent(name, data === "[DONE]" ? data : { ...data, sequence_number: sequenceNumber++ });
 
   return [
     event("response.created", {
@@ -274,11 +276,7 @@ function compactionSummaryTextFromResponsesSse(text: string): string {
   let deltas = "";
   let completedResponse: JsonObject | undefined;
   for (const block of text.split(/\r?\n\r?\n/)) {
-    const data = block
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trim())
-      .join("");
+    const { data } = parseSseBlock(block);
     if (!data || data === "[DONE]") {
       continue;
     }
@@ -330,7 +328,7 @@ export function completionStreamFromChatStream(
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueue = (data: JsonObject | "[DONE]") => {
-        controller.enqueue(encoder.encode(encodeDataSse(data)));
+        controller.enqueue(encoder.encode(encodeSseData(data)));
       };
       const markTerminal = () => {
         sawTerminalEvent = true;
@@ -371,7 +369,7 @@ export function completionSseTextFromChatSseText(text: string): string {
   const chunks: string[] = [];
   let sawTerminalEvent = false;
   const enqueue = (data: JsonObject | "[DONE]") => {
-    chunks.push(encodeDataSse(data));
+    chunks.push(encodeSseData(data));
   };
   const markTerminal = () => {
     sawTerminalEvent = true;
@@ -439,7 +437,7 @@ export function responsesStreamFromChatStream(
       const enqueue = (event: string, data: JsonObject | "[DONE]") => {
         controller.enqueue(
           encoder.encode(
-            encodeSse(
+            encodeSseEvent(
               event,
               data === "[DONE]" ? data : { ...data, sequence_number: sequenceNumber++ },
             ),
@@ -1062,17 +1060,7 @@ function processCompletionSseBlock(
   enqueue: (data: JsonObject | "[DONE]") => void,
   markTerminal: () => void,
 ): void {
-  let event = "message";
-  const dataLines: string[] = [];
-  for (const line of block.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("event:")) {
-      event = trimmed.slice("event:".length).trim() || event;
-    } else if (trimmed.startsWith("data:")) {
-      dataLines.push(trimmed.slice("data:".length).trim());
-    }
-  }
-  const data = dataLines.join("\n");
+  const { data, event } = parseSseBlock(block);
   if (!data) {
     return;
   }
@@ -1155,11 +1143,7 @@ function processChatSseLine(
     appendToolCall: (toolCall: JsonObject) => void;
   },
 ): void {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) {
-    return;
-  }
-  const data = trimmed.slice("data:".length).trim();
+  const data = sseDataFromLine(line);
   if (!data || data === "[DONE]") {
     return;
   }
@@ -1206,20 +1190,6 @@ function baseStreamResponse(
     tools: [],
     top_p: null,
   };
-}
-
-function encodeSse(event: string, data: JsonObject | "[DONE]"): string {
-  if (data === "[DONE]") {
-    return "data: [DONE]\n\n";
-  }
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
-function encodeDataSse(data: JsonObject | "[DONE]"): string {
-  if (data === "[DONE]") {
-    return "data: [DONE]\n\n";
-  }
-  return `data: ${JSON.stringify(data)}\n\n`;
 }
 
 function epochSeconds(): number {

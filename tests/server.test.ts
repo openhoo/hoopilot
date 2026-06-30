@@ -987,7 +987,7 @@ describe("createHoopilotHandler", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      data: [expect.objectContaining({ id: "gpt-4.1" })],
+      data: [expect.objectContaining({ id: "gpt-5.5" })],
       object: "list",
     });
   });

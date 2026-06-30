@@ -264,6 +264,29 @@ describe("verifyCopilotOAuthToken", () => {
     ).rejects.toThrow("GitHub Copilot API verification failed with 403");
   });
 
+  it("times out stalled Copilot verification requests", async () => {
+    let sawSignal = false;
+    const fetcher: FetchLike = async (_input, init) => {
+      const signal = init?.signal;
+      sawSignal = signal instanceof AbortSignal;
+      return await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => reject(signal.reason ?? new Error("verification aborted")),
+          { once: true },
+        );
+      });
+    };
+
+    await expect(
+      verifyCopilotOAuthToken("oauth-token", {
+        fetch: fetcher,
+        verifyTimeoutMs: 1,
+      }),
+    ).rejects.toThrow(/aborted|timed out|operation was aborted/i);
+    expect(sawSignal).toBe(true);
+  });
+
   it("does not send OAuth tokens to untrusted Copilot API URLs", async () => {
     for (const copilotApiBaseUrl of ["http://copilot.internal", "https://evil.example"]) {
       let calls = 0;

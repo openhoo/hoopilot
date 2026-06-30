@@ -1,10 +1,3 @@
-export {
-  AnthropicCompatibilityError,
-  anthropicMessagesToResponsesRequest,
-  estimateAnthropicMessageTokens,
-  responsesResponseToAnthropicMessage,
-  responsesStreamToAnthropicStream,
-} from "./anthropic";
 export { CopilotAuth, CopilotAuthError, DEFAULT_COPILOT_API_BASE_URL } from "./auth";
 export { authStorePath, readStoredCopilotAuth, writeStoredCopilotAuth } from "./auth-store";
 export {
@@ -16,6 +9,7 @@ export {
   normalizeCopilotUsage,
   parseRateLimitHeaders,
 } from "./copilot";
+export { DEFAULT_MODEL } from "./defaults";
 export { githubCopilotDeviceLogin } from "./github-device";
 export {
   createHoopilotLogger,
@@ -25,28 +19,7 @@ export {
   parseLogFormat,
   parseLogLevel,
 } from "./logger";
-export {
-  MetricsRegistry,
-  observeResponseUsage,
-  PROMETHEUS_CONTENT_TYPE,
-  recordResponseTextUsage,
-} from "./metrics";
-export {
-  chatCompletionToCompletion,
-  chatCompletionToResponse,
-  completionStreamFromChatStream,
-  completionsRequestToChatCompletion,
-  DEFAULT_MODEL,
-  extractTokenUsage,
-  fallbackModels,
-  normalizeChatCompletionRequest,
-  normalizeModelsResponse,
-  normalizeRequestedModel,
-  OpenAICompatibilityError,
-  responsesCompactionResult,
-  responsesRequestToChatCompletion,
-  responsesStreamFromChatStream,
-} from "./openai";
+export { MetricsRegistry, PROMETHEUS_CONTENT_TYPE } from "./metrics";
 export { createHoopilotHandler, startHoopilotServer } from "./server";
 export type {
   CopilotAccess,

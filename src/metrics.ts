@@ -1,4 +1,5 @@
 import { extractTokenUsage } from "./openai";
+import { sseDataFromLine } from "./sse";
 import type {
   CopilotQuota,
   CopilotUsage,
@@ -757,11 +758,7 @@ function safeFinishAccumulator(accumulator: { finish: () => void }): void {
 }
 
 function considerSseLine(line: string, consider: (payload: unknown) => void): void {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) {
-    return;
-  }
-  const data = trimmed.slice("data:".length).trim();
+  const data = sseDataFromLine(line);
   if (!data || data === "[DONE]") {
     return;
   }

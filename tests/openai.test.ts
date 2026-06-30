@@ -191,7 +191,7 @@ describe("normalizeChatCompletionRequest", () => {
 
 describe("normalizeRequestedModel", () => {
   it("defaults blank models and preserves non-aliased model names", () => {
-    expect(normalizeRequestedModel("")).toBe("gpt-4.1");
+    expect(normalizeRequestedModel("")).toBe("gpt-5.5");
     expect(normalizeRequestedModel("gpt-5.5")).toBe("gpt-5.5");
     expect(normalizeRequestedModel("claude-sonnet-4")).toBe("claude-sonnet-4");
   });

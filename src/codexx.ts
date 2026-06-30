@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { constants as osConstants } from "node:os";
+import { DEFAULT_MODEL } from "./defaults";
 import type { FetchLike } from "./types";
 import {
   envValue,
@@ -13,7 +14,6 @@ import {
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:4141/v1";
 const DEFAULT_CODEX_BIN = "codex";
-const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_REASONING_EFFORT = "xhigh";
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const PROXY_ENV_KEYS = [

@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { Elysia } from "elysia";
 import {
   AnthropicCompatibilityError,
@@ -16,6 +15,33 @@ import {
   parseRateLimitHeaders,
 } from "./copilot";
 import { DASHBOARD_HTML } from "./dashboard";
+import {
+  InvalidJsonError,
+  JsonNotObjectError,
+  RequestBodyTooLargeError,
+  readJson,
+  readJsonText,
+} from "./http/body";
+import {
+  jsonError,
+  jsonResponse,
+  proxyResponse,
+  responseFromText,
+  textResponse,
+  upstreamErrorResponse,
+  websocketUnsupportedResponse,
+} from "./http/responses";
+import {
+  apiKeyRejectionReason,
+  corsHeaders,
+  FORBIDDEN_BROWSER_ORIGIN_MESSAGE,
+  forbiddenBrowserOrigin,
+  isAuthorized,
+  isLoopbackHost,
+  parseAllowedOrigins,
+  resolveCorsAllowOrigin,
+  urlHost,
+} from "./http/security";
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
   MetricsRegistry,
@@ -53,40 +79,12 @@ import type {
   TokenUsage,
   UsageResponseBody,
 } from "./types";
-import {
-  asRecord,
-  envValue,
-  errorMessage,
-  isLoopbackHostname,
-  parseStreamingProxyMode,
-  safeJsonParse,
-} from "./util";
+import { asRecord, envValue, errorMessage, parseStreamingProxyMode } from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
-const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
-  "Cross-origin browser requests are blocked unless the Origin is loopback or listed in HOOPILOT_ALLOWED_ORIGINS.";
-const MIN_NON_LOOPBACK_API_KEY_LENGTH = 24;
-// API keys we ship in docs/examples as placeholders. They are effectively public,
-// so refusing them on non-loopback binds keeps a credential-backed proxy from being
-// reachable on a network with a guessable key.
-const WELL_KNOWN_DEMO_API_KEYS = new Set([
-  "changeme",
-  "demo",
-  "example",
-  "hoopilot",
-  "local-key",
-  "password",
-  "password123",
-  "secret",
-  "test",
-]);
-const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
-const JSON_OBJECT_MESSAGE = "Request body must be a JSON object.";
-const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-const REQUEST_TOO_LARGE_MESSAGE = `Request body must be ${MAX_REQUEST_BODY_BYTES} bytes or smaller.`;
 const USAGE_CACHE_TTL_MS = 60_000;
 const DASHBOARD_USAGE_VIEW = "dashboard";
 const DASHBOARD_EXCLUDED_ROUTES = [
@@ -106,29 +104,6 @@ interface UsageReadResult {
 type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
 type TokenRecorder = (model: string, usage: TokenUsage) => void;
 type ExtractionRecorder = (extracted: boolean) => void;
-
-class RequestBodyTooLargeError extends Error {
-  constructor() {
-    super(REQUEST_TOO_LARGE_MESSAGE);
-    this.name = "RequestBodyTooLargeError";
-  }
-}
-
-// Typed body-parse failures so onError discriminates them by `instanceof` like
-// the other handler errors, instead of matching on the message string.
-class InvalidJsonError extends Error {
-  constructor() {
-    super(INVALID_JSON_MESSAGE);
-    this.name = "InvalidJsonError";
-  }
-}
-
-class JsonNotObjectError extends Error {
-  constructor() {
-    super(JSON_OBJECT_MESSAGE);
-    this.name = "JsonNotObjectError";
-  }
-}
 
 export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
@@ -817,14 +792,6 @@ async function responseWithObservedUsage(
   return observeResponseUsage(response, fallbackModel, recordTokens, signal, recordExtraction);
 }
 
-function responseFromText(source: Response, text: string): Response {
-  return new Response(text, {
-    headers: source.headers,
-    status: source.status,
-    statusText: source.statusText,
-  });
-}
-
 async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<Response> {
   const text = await upstream.text();
   if (isUpstreamAuthStatus(upstream.status)) {
@@ -841,256 +808,12 @@ async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<R
   return upstreamErrorResponse(upstream.status, text || upstream.statusText);
 }
 
-function proxyResponse(upstream: Response): Response {
-  const headers = new Headers(upstream.headers);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  headers.delete("transfer-encoding");
-  for (const [key, value] of Object.entries(corsHeaders())) {
-    headers.set(key, value);
-  }
-  return new Response(upstream.body, {
-    headers,
-    status: upstream.status,
-    statusText: upstream.statusText,
-  });
-}
-
-async function readJson(request: Request): Promise<JsonObject> {
-  const text = await readRequestText(request);
-  return parseJsonObject(text);
-}
-
-function parseJsonObject(text: string): JsonObject {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new InvalidJsonError();
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new JsonNotObjectError();
-  }
-  return parsed as JsonObject;
-}
-
-async function readJsonText(request: Request): Promise<{ json: JsonObject; text: string }> {
-  const text = await readRequestText(request);
-  return { json: parseJsonObject(text), text };
-}
-
-async function readRequestText(request: Request): Promise<string> {
-  const contentLength = request.headers.get("content-length");
-  if (contentLength) {
-    const declaredBytes = Number(contentLength);
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REQUEST_BODY_BYTES) {
-      throw new RequestBodyTooLargeError();
-    }
-  }
-
-  const body = request.body;
-  if (!body) {
-    return "";
-  }
-
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  const chunks: string[] = [];
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        const tail = decoder.decode();
-        if (tail) {
-          chunks.push(tail);
-        }
-        return chunks.join("");
-      }
-      bytes += value.byteLength;
-      if (bytes > MAX_REQUEST_BODY_BYTES) {
-        await reader.cancel().catch(() => {});
-        throw new RequestBodyTooLargeError();
-      }
-      chunks.push(decoder.decode(value, { stream: true }));
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function jsonResponse(body: object, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    headers: {
-      ...corsHeaders(),
-      "content-type": "application/json; charset=utf-8",
-    },
-    status,
-  });
-}
-
-function textResponse(body: string, contentType: string, status = 200): Response {
-  return new Response(body, {
-    headers: {
-      ...corsHeaders(),
-      "content-type": `${contentType}; charset=utf-8`,
-    },
-    status,
-  });
-}
-
-function jsonError(status: number, code: string, message: string): Response {
-  return jsonResponse(
-    {
-      error: {
-        code,
-        message,
-        type: code,
-      },
-    },
-    status,
-  );
-}
-
-function upstreamErrorResponse(status: number, text: string): Response {
-  const parsedError = asRecord(asRecord(safeJsonParse(text)).error);
-  if (Object.keys(parsedError).length > 0) {
-    return jsonResponse({ error: parsedError }, status);
-  }
-  return jsonError(status, "copilot_error", text);
-}
-
-function websocketUnsupportedResponse(): Response {
-  const response = jsonError(
-    426,
-    "websocket_not_supported",
-    "Hoopilot does not support Responses WebSocket transport; retry with HTTP Responses API.",
-  );
-  response.headers.set("upgrade", "websocket");
-  return response;
-}
-
-// CORS headers shared by every response. The `access-control-allow-origin` value
-// is intentionally omitted here and set per-request by `finishResponse`, so the
-// proxy only advertises access to origins it actually allows (loopback or
-// HOOPILOT_ALLOWED_ORIGINS) instead of a blanket wildcard.
-function corsHeaders(): Record<string, string> {
-  return {
-    "access-control-allow-headers":
-      "anthropic-beta, anthropic-dangerous-direct-browser-access, anthropic-version, authorization, content-type, x-api-key, x-request-id",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-expose-headers": "x-request-id",
-  };
-}
-
-// Compare two secrets in constant time. Both sides are hashed to a fixed-width
-// digest first so neither the key length nor a prefix match leaks via timing.
-function secretEquals(candidate: string, secret: string): boolean {
-  const a = createHash("sha256").update(candidate).digest();
-  const b = createHash("sha256").update(secret).digest();
-  return timingSafeEqual(a, b);
-}
-
-function isAuthorized(request: Request, apiKey: string | undefined): boolean {
-  if (!apiKey) {
-    return true;
-  }
-  const authorization = request.headers.get("authorization") ?? "";
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
-  return (
-    (bearer !== undefined && secretEquals(bearer, apiKey)) ||
-    secretEquals(request.headers.get("x-api-key") ?? "", apiKey)
-  );
-}
-
-// Block cross-origin browser requests regardless of whether an API key is set.
-// The proxy holds a GitHub OAuth credential and is meant for local CLI/tool
-// clients, never for arbitrary web pages: a malicious site must not be able to
-// drive it even if it knows (or guesses) the local API key. Loopback origins and
-// any origin in HOOPILOT_ALLOWED_ORIGINS are allowed through to the key check.
-function forbiddenBrowserOrigin(
-  origin: string | undefined,
-  request: Request,
-  allowedOrigins: ReadonlySet<string>,
-): string | undefined {
-  if (origin) {
-    return isAllowedOrigin(origin, allowedOrigins) ? undefined : origin;
-  }
-
-  const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
-  return fetchSite === "cross-site" ? "cross-site" : undefined;
-}
-
-// Parse the comma-separated HOOPILOT_ALLOWED_ORIGINS allowlist into a normalized
-// set of exact origins (scheme + host + optional port), lower-cased for matching.
-function parseAllowedOrigins(env: NodeJS.ProcessEnv | undefined): ReadonlySet<string> {
-  const raw = envValue(env?.HOOPILOT_ALLOWED_ORIGINS);
-  if (!raw) {
-    return new Set();
-  }
-  return new Set(
-    raw
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter((value) => value.length > 0),
-  );
-}
-
-function isAllowedOrigin(origin: string, allowedOrigins: ReadonlySet<string>): boolean {
-  return isLoopbackOrigin(origin) || allowedOrigins.has(origin.toLowerCase());
-}
-
-// Resolve the `access-control-allow-origin` value for a response. Allowed browser
-// origins are echoed back (so the page can read the response); a request with no
-// Origin is a non-browser client where the value is inert, so we keep `*`;
-// disallowed origins get no header (they are also blocked with a 403), so a
-// malicious page cannot read even an error body.
-function resolveCorsAllowOrigin(
-  origin: string | undefined,
-  allowedOrigins: ReadonlySet<string>,
-): string | undefined {
-  if (!origin) {
-    return "*";
-  }
-  return isAllowedOrigin(origin, allowedOrigins) ? origin : undefined;
-}
-
-function apiKeyRejectionReason(apiKey: string): string | undefined {
-  const normalized = apiKey.trim();
-  if (WELL_KNOWN_DEMO_API_KEYS.has(normalized.toLowerCase())) {
-    return "HOOPILOT_API_KEY is a well-known demo value. Set a strong, unique API key.";
-  }
-  if (normalized.length < MIN_NON_LOOPBACK_API_KEY_LENGTH) {
-    return `HOOPILOT_API_KEY must be at least ${MIN_NON_LOOPBACK_API_KEY_LENGTH} characters when listening on a non-loopback host.`;
-  }
-  if (/^(.)\1+$/.test(normalized)) {
-    return "HOOPILOT_API_KEY must not be a repeated single character. Set a strong, unique API key.";
-  }
-  return undefined;
-}
-
 function isUpstreamAuthStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
 
 function upstreamAuthMessage(message: string): string {
   return `GitHub Copilot rejected the credential or account access: ${message}`;
-}
-
-function isLoopbackHost(host: string): boolean {
-  return isLoopbackHostname(host);
-}
-
-function urlHost(host: string): string {
-  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-}
-
-function isLoopbackOrigin(origin: string): boolean {
-  try {
-    return isLoopbackHost(new URL(origin).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
 }
 
 function normalizeServerPort(value: number | string): number {
