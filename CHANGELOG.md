@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.5 (2026-06-30)
+
+### Bug Fixes
+
+- address review findings (3209f5b)
+
 ## 2.1.4 (2026-06-30)
 
 ### Bug Fixes
