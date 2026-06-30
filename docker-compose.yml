@@ -19,6 +19,8 @@ services:
       # precedence and clients must send it as `Authorization: Bearer <key>` or
       # `x-api-key: <key>`. Generate one with: openssl rand -hex 24
       HOOPILOT_API_KEY: ${HOOPILOT_API_KEY:-}
+      HOOPILOT_ACCESS_LOG: ${HOOPILOT_ACCESS_LOG:-0}
+      HOOPILOT_USAGE_ACCOUNTING: ${HOOPILOT_USAGE_ACCOUNTING:-basic}
     volumes:
       # Persists the GitHub Copilot OAuth credential across restarts.
       - hoopilot-data:/data

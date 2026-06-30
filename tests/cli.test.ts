@@ -28,6 +28,9 @@ describe("parseArgs", () => {
         "--log-level=debug",
         "--stream-mode",
         "buffer",
+        "--usage-accounting",
+        "basic",
+        "--no-access-log",
         "--port",
         "4242",
       ]),
@@ -38,6 +41,8 @@ describe("parseArgs", () => {
       logLevel: "debug",
       port: 4242,
       streamingProxyMode: "buffer",
+      usageAccountingMode: "basic",
+      accessLog: false,
     });
   });
 
@@ -98,6 +103,12 @@ describe("parseArgs", () => {
 
   it("rejects invalid stream modes", () => {
     expect(() => parseArgs(["--stream-mode", "fast"])).toThrow("Invalid stream mode");
+  });
+
+  it("rejects invalid usage accounting modes", () => {
+    expect(() => parseArgs(["--usage-accounting", "cheap"])).toThrow(
+      "Invalid usage accounting mode",
+    );
   });
 
   it("rejects ports outside the TCP range", () => {

@@ -369,7 +369,7 @@ docker run --rm -v hoopilot-data:/data ghcr.io/openhoo/hoopilot login --print-ke
 
 ## Logging
 
-Hoopilot uses Pino for structured logs. Server startup, request completion, upstream Copilot failures, model-list fallback, auth failures, and update-check diagnostics are logged with stable event names and request IDs.
+Hoopilot uses Pino for structured logs. Server startup, request errors, upstream Copilot failures, model-list fallback, auth failures, and update-check diagnostics are logged with stable event names and request IDs. Successful request completion logs are disabled by default; pass `--access-log` or set `HOOPILOT_ACCESS_LOG=1` to enable them.
 
 Logs never include request bodies, prompt text, completions, stream chunks, OAuth tokens, API keys, authorization headers, cookies, or auth-file contents.
 
@@ -379,7 +379,7 @@ Console logs default to pretty output at `info` level:
 hoopilot --log-level info --log-format pretty
 ```
 
-Pretty logs keep common request and diagnostic fields inline for terminal use:
+When access logs are enabled, pretty logs keep common request and diagnostic fields inline for terminal use:
 
 ```text
 INFO [16:40:14]: request completed component=server event=http.request.completed method=POST path=/v1/chat/completions status=200 duration=42.37ms stream=true requestId=req-test
@@ -401,7 +401,9 @@ Hoopilot tracks token usage, request counts, and latency in memory while the ser
 - `GET /v1/usage` returns JSON combining the proxy metrics snapshot with live Copilot quota fetched from GitHub and cached for 60 seconds. If quota cannot be read, `copilot` is `null` and `copilot_error` explains why. The snapshot's `proxy.githubRateLimit` field reports the most recent GitHub REST rate-limit budget per resource (`limit`, `remaining`, `used`, `resetAt`, `retryAfterSeconds`, `observedAt`).
 - `hoopilot usage` prints your Copilot plan and quota — and, when GitHub returns them, your GitHub API rate-limit budget — from the command line.
 
-Token usage is read from the upstream `usage` object. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot does not inject that flag. Responses API streaming always reports usage, so streamed Responses requests are fully accounted. The `hoopilot_token_extraction_total{outcome="extracted"|"missing"}` counter (mirrored in `/v1/usage` as `proxy.tokens.extraction`) tracks how often a completion reported usage versus not, so a rising `missing` count flags clients whose token usage is going unaccounted.
+Token usage is read from the upstream `usage` object when Hoopilot is already parsing a compatibility response, or when full token accounting is enabled. For streaming chat completions, usage is only available when the client sends `stream_options: {"include_usage": true}`; Hoopilot does not inject that flag.
+
+The default `HOOPILOT_USAGE_ACCOUNTING=basic` mode skips token extraction from pass-through response bodies and SSE streams while still recording usage from compatibility responses Hoopilot already has to parse. Set `HOOPILOT_USAGE_ACCOUNTING=full` when exact pass-through stream/body token accounting matters more than CPU use. Set `HOOPILOT_USAGE_ACCOUNTING=off` to skip token accounting entirely. Request counts, upstream counts, latency, in-flight metrics, `/metrics`, and `/v1/usage` still work in every mode. The `hoopilot_token_extraction_total{outcome="extracted"|"missing"}` counter (mirrored in `/v1/usage` as `proxy.tokens.extraction`) tracks how often a completion reported usage versus not.
 
 GitHub API usage is read from the `x-ratelimit-*` response headers that `api.github.com` returns on the `copilot_internal/user` quota call Hoopilot already makes, so it costs no extra request. (The Copilot completion host `api.githubcopilot.com` does not currently emit these headers, so per-completion rate-limit data is not yet available there.)
 
@@ -452,6 +454,7 @@ Server and local-client settings:
 | `HOOPILOT_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to make cross-origin requests. Loopback origins are always allowed; every other origin is blocked. |
 | `HOOPILOT_ALLOW_UNAUTHENTICATED` / `--allow-unauthenticated` | Allow non-loopback binds without a local API key. |
 | `HOOPILOT_STREAM_MODE` / `--stream-mode` | `auto`, `live`, or `buffer`. `auto` buffers streams for Windows standalone binaries. `HOOPILOT_STREAMING_PROXY_MODE` is accepted as an alias. |
+| `HOOPILOT_USAGE_ACCOUNTING` / `--usage-accounting` | `basic`, `full`, or `off`. Default: `basic`. `basic` avoids token extraction from pass-through bodies/streams; `full` tracks all reported usage; `off` skips token accounting. |
 
 Copilot and GitHub settings:
 
@@ -470,9 +473,20 @@ Logging and update settings:
 | --- | --- |
 | `HOOPILOT_LOG_LEVEL` / `--log-level` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`. Default: `info`. |
 | `HOOPILOT_LOG_FORMAT` / `--log-format` | `pretty` or `json`. Default: `pretty`. |
+| `HOOPILOT_ACCESS_LOG` / `--access-log` / `--no-access-log` | Successful request logs are disabled by default. Set `1`/`true` or pass `--access-log` to enable them. Client and server errors are still logged. |
 | `HOOPILOT_UPSTREAM_TIMEOUT_MS` | Time to wait for Copilot response headers before returning `504 copilot_timeout`. Default: `120000`; set `0` to disable. |
 | `HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS` | Time to wait for bytes on a Copilot response body before failing the stream so clients can retry. Default: `120000`; set `0` to disable. |
 | `HOOPILOT_NO_UPDATE_CHECK` / `--no-update-check` | Disable background update checks. `NO_UPDATE_NOTIFIER` is also honored. |
+
+The default service profile is low-resource:
+
+```sh
+hoopilot
+```
+
+For the quietest local service, also use `HOOPILOT_LOG_LEVEL=warn HOOPILOT_NO_UPDATE_CHECK=1`.
+
+If you prefer fewer stream timers and can tolerate clients handling stalled upstream streams themselves, also set `HOOPILOT_UPSTREAM_STREAM_IDLE_TIMEOUT_MS=0`.
 
 `codexx` settings:
 

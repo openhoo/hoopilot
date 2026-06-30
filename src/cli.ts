@@ -36,6 +36,7 @@ import {
   isTrustedTokenBaseUrl,
   modelIdsFromResponse,
   parseStreamingProxyMode,
+  parseUsageAccountingMode,
   trimTrailingSlash,
   truncatedResponseText,
 } from "./util";
@@ -178,6 +179,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       args.allowUnauthenticated = true;
       continue;
     }
+    if (arg === "--access-log") {
+      args.accessLog = true;
+      continue;
+    }
+    if (arg === "--no-access-log") {
+      args.accessLog = false;
+      continue;
+    }
     if (arg === "--no-update-check") {
       args.noUpdateCheck = true;
       continue;
@@ -213,6 +222,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--stream-mode":
         args.streamingProxyMode = parseStreamingProxyMode(optionValue(name, inlineValue, rest));
+        break;
+      case "--usage-accounting":
+        args.usageAccountingMode = parseUsageAccountingMode(optionValue(name, inlineValue, rest));
         break;
       case "--host":
         args.host = optionValue(name, inlineValue, rest);
@@ -574,6 +586,9 @@ Options:
       --log-level <level>           trace, debug, info, warn, error, fatal, or silent
       --log-format <format>         json or pretty. Default: pretty
       --stream-mode <mode>          auto, live, or buffer. Auto buffers Windows standalone streams.
+      --usage-accounting <mode>     basic, full, or off. Default: basic
+      --access-log                  Log successful requests
+      --no-access-log               Do not log successful requests. Default
       --no-update-check             Do not check GitHub for a newer release
       --allow-unauthenticated       Allow non-loopback bind without --api-key
   -h, --help                        Show help
@@ -587,6 +602,8 @@ Environment:
   HOOPILOT_LOG_FORMAT               json or pretty. Default: pretty
   HOOPILOT_LOG_LEVEL                trace, debug, info, warn, error, fatal, or silent
   HOOPILOT_STREAM_MODE              auto, live, or buffer
+  HOOPILOT_USAGE_ACCOUNTING         basic, full, or off
+  HOOPILOT_ACCESS_LOG               1/0, true/false, yes/no, or on/off
   COPILOT_API_BASE_URL
   HOOPILOT_GITHUB_API_BASE_URL      GitHub REST base for the usage/quota lookup. Default: https://api.github.com
   HOOPILOT_ALLOW_UNSAFE_UPSTREAM    Set to 1 to allow nonstandard HTTPS token hosts

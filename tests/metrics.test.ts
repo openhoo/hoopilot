@@ -204,6 +204,41 @@ describe("MetricsRegistry", () => {
     expect(text).toContain("hoopilot_uptime_seconds 4");
   });
 
+  it("caches Prometheus rendering until metrics change", () => {
+    const metrics = new MetricsRegistry({ now: () => 1_000 });
+    metrics.observe({ durationMs: 120, method: "POST", route: "chat_completions", status: 200 });
+
+    const first = metrics.renderPrometheus(() => 5_000);
+    const cached = metrics.renderPrometheus(() => 5_500);
+    expect(cached).toBe(first);
+
+    metrics.recordUpstream("/chat/completions", true);
+    const changed = metrics.renderPrometheus(() => 5_600);
+    expect(changed).not.toBe(first);
+    expect(changed).toContain(
+      'hoopilot_upstream_requests_total{outcome="ok",path="/chat/completions"} 1',
+    );
+  });
+
+  it("keeps repeated metrics scrapes from invalidating the Prometheus cache", () => {
+    const metrics = new MetricsRegistry({ now: () => 1_000 });
+    metrics.startRequest("metrics");
+    metrics.observe({ durationMs: 12, method: "GET", route: "metrics", status: 200 });
+
+    const first = metrics.renderPrometheus(() => 5_000);
+    metrics.startRequest("metrics");
+    metrics.observe({ durationMs: 14, method: "GET", route: "metrics", status: 200 });
+
+    expect(metrics.snapshot().requests.byRoute.metrics).toBe(2);
+    expect(metrics.renderPrometheus(() => 5_500)).toBe(first);
+
+    const expired = metrics.renderPrometheus(() => 6_100);
+    expect(expired).not.toBe(first);
+    expect(expired).toContain(
+      'hoopilot_requests_total{method="GET",route="metrics",status="200"} 2',
+    );
+  });
+
   it("escapes special characters in label values", () => {
     const metrics = new MetricsRegistry();
     metrics.recordTokens('gpt"x', { completionTokens: 1, promptTokens: 1, totalTokens: 2 });

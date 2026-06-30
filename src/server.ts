@@ -45,9 +45,9 @@ import {
 import { createHoopilotLogger, errorDetails, noopLogger, shouldCreateLogger } from "./logger";
 import {
   MetricsRegistry,
-  observeResponseUsage,
   PROMETHEUS_CONTENT_TYPE,
   recordResponseTextUsage,
+  streamWithUsageObservation,
 } from "./metrics";
 import {
   chatCompletionToCompletion,
@@ -77,9 +77,17 @@ import type {
   StartedHoopilotServer,
   StreamingProxyMode,
   TokenUsage,
+  UsageAccountingMode,
   UsageResponseBody,
 } from "./types";
-import { asRecord, envValue, errorMessage, parseStreamingProxyMode } from "./util";
+import {
+  asRecord,
+  envValue,
+  errorMessage,
+  parseBooleanEnv,
+  parseStreamingProxyMode,
+  parseUsageAccountingMode,
+} from "./util";
 import { getVersion, IS_STANDALONE_BINARY } from "./version";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -104,6 +112,18 @@ interface UsageReadResult {
 type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
 type TokenRecorder = (model: string, usage: TokenUsage) => void;
 type ExtractionRecorder = (extracted: boolean) => void;
+type UsageExtractionCost = "body" | "buffered" | "parsed";
+type ResponseUsageMarker = (
+  response: Response,
+  fallbackModel: string,
+  cost: UsageExtractionCost,
+) => Response;
+
+interface ResponseUsageObservation {
+  fallbackModel: string;
+  recordExtraction: ExtractionRecorder;
+  recordTokens: TokenRecorder;
+}
 
 export function createHoopilotHandler(
   options: HoopilotServerOptions = {},
@@ -118,6 +138,15 @@ export function createHoopilotHandler(
   const recordExtraction: ExtractionRecorder = (extracted) =>
     metrics.recordTokenExtraction(extracted);
   const bufferProxyBodies = shouldBufferProxyBodies(resolveStreamingProxyMode(options));
+  const usageAccountingMode = resolveUsageAccountingMode(options);
+  const accessLog = resolveAccessLog(options);
+  const responseUsage = new WeakMap<Response, ResponseUsageObservation>();
+  const markUsage: ResponseUsageMarker = (response, fallbackModel, cost) => {
+    if (shouldExtractUsage(usageAccountingMode, cost)) {
+      responseUsage.set(response, { fallbackModel, recordExtraction, recordTokens });
+    }
+    return response;
+  };
 
   // Per-request channel into the Elysia lifecycle. The bookend below builds the
   // child logger once (with the canonical request id and the original path) and
@@ -130,11 +159,13 @@ export function createHoopilotHandler(
     allowedOrigins,
     bufferProxyBodies,
     client,
+    markUsage,
     metrics,
     readUsage,
     recordExtraction,
     recordTokens,
     requestContext,
+    usageAccountingMode,
   });
 
   return async (request: Request): Promise<Response> => {
@@ -184,11 +215,14 @@ export function createHoopilotHandler(
 
     return finishResponse(response, {
       corsOrigin,
+      accessLog,
       logger: requestLogger,
       method: request.method,
       metrics,
       requestId,
+      signal: request.signal,
       route,
+      usageObservation: responseUsage.get(response),
       startedAt,
       closeConnection: bufferProxyBodies,
       trackStreamingBody: !bufferProxyBodies,
@@ -213,11 +247,13 @@ interface ServerDeps {
   allowedOrigins: ReadonlySet<string>;
   bufferProxyBodies: boolean;
   client: CopilotClient;
+  markUsage: ResponseUsageMarker;
   metrics: MetricsRegistry;
   readUsage: UsageReader;
   recordExtraction: ExtractionRecorder;
   recordTokens: TokenRecorder;
   requestContext: WeakMap<Request, RequestContext>;
+  usageAccountingMode: UsageAccountingMode;
 }
 
 // Build the Elysia application once per handler factory (closing over deps), then
@@ -239,11 +275,13 @@ function buildApp(deps: ServerDeps) {
     allowedOrigins,
     bufferProxyBodies,
     client,
+    markUsage,
     metrics,
     readUsage,
     recordExtraction,
     recordTokens,
     requestContext,
+    usageAccountingMode,
   } = deps;
 
   // Recover the request-scoped context the bookend stashed (keyed by request
@@ -367,11 +405,13 @@ function buildApp(deps: ServerDeps) {
           handleAnthropicMessages(
             client,
             metrics,
+            markUsage,
             recordTokens,
             recordExtraction,
             request,
             loggerFor(request),
             bufferProxyBodies,
+            usageAccountingMode,
           ),
         noBody,
       )
@@ -386,11 +426,13 @@ function buildApp(deps: ServerDeps) {
           handleChatCompletions(
             client,
             metrics,
+            markUsage,
             recordTokens,
             recordExtraction,
             request,
             loggerFor(request),
             bufferProxyBodies,
+            usageAccountingMode,
           ),
         noBody,
       )
@@ -400,11 +442,13 @@ function buildApp(deps: ServerDeps) {
           handleCompletions(
             client,
             metrics,
+            markUsage,
             recordTokens,
             recordExtraction,
             request,
             loggerFor(request),
             bufferProxyBodies,
+            usageAccountingMode,
           ),
         noBody,
       )
@@ -418,6 +462,7 @@ function buildApp(deps: ServerDeps) {
             recordExtraction,
             request,
             loggerFor(request),
+            usageAccountingMode,
           ),
         noBody,
       )
@@ -427,11 +472,13 @@ function buildApp(deps: ServerDeps) {
           handleResponses(
             client,
             metrics,
+            markUsage,
             recordTokens,
             recordExtraction,
             request,
             loggerFor(request),
             bufferProxyBodies,
+            usageAccountingMode,
           ),
         noBody,
       )
@@ -502,11 +549,13 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
 async function handleAnthropicMessages(
   client: CopilotClient,
   metrics: MetricsRegistry,
+  markUsage: ResponseUsageMarker,
   recordTokens: TokenRecorder,
   recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const anthropicRequest = await readJson(request);
   const responsesRequest = anthropicMessagesToResponsesRequest(anthropicRequest);
@@ -521,37 +570,33 @@ async function handleAnthropicMessages(
   if (isStreamingResponse(upstream) && upstream.body) {
     if (bufferProxyBodies) {
       const text = await upstream.text();
-      recordResponseTextUsage(text, true, model, recordTokens, recordExtraction);
+      recordBufferedUsage(text, true, model, usageAccountingMode, recordTokens, recordExtraction);
       return proxyResponse(
         responseFromText(upstream, responsesSseTextToAnthropicSseText(text, { model })),
       );
     }
-    const observed = observeResponseUsage(
-      upstream,
+    return markUsage(
+      proxyResponse(
+        new Response(responsesStreamToAnthropicStream(upstream.body, { model }), {
+          headers: upstream.headers,
+          status: upstream.status,
+          statusText: upstream.statusText,
+        }),
+      ),
       model,
-      recordTokens,
-      request.signal,
-      recordExtraction,
-    );
-    if (!observed.body) {
-      return proxyResponse(observed);
-    }
-    return proxyResponse(
-      new Response(responsesStreamToAnthropicStream(observed.body, { model }), {
-        headers: observed.headers,
-        status: observed.status,
-        statusText: observed.statusText,
-      }),
+      "body",
     );
   }
 
   const body = asRecord(await upstream.json());
-  const usage = extractTokenUsage(body.usage);
-  if (usage) {
-    const responseModel = typeof body.model === "string" ? body.model.trim() : "";
-    recordTokens(responseModel || model, usage);
-  }
-  recordExtraction(usage !== undefined);
+  recordParsedUsage(
+    body.usage,
+    typeof body.model === "string" ? body.model.trim() : model,
+    model,
+    usageAccountingMode,
+    recordTokens,
+    recordExtraction,
+  );
   return jsonResponse(responsesResponseToAnthropicMessage(body, model));
 }
 
@@ -589,11 +634,13 @@ async function handleModels(
 async function handleChatCompletions(
   client: CopilotClient,
   metrics: MetricsRegistry,
+  markUsage: ResponseUsageMarker,
   recordTokens: TokenRecorder,
   recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const chatRequest = normalizeChatCompletionRequest(await readJson(request));
   const upstream = await client.chatCompletions(chatRequest, request.signal);
@@ -603,26 +650,27 @@ async function handleChatCompletions(
   }
   logUpstreamSuccess(logger, "/chat/completions", upstream.status);
   const model = normalizeRequestedModel(chatRequest.model);
-  return proxyResponse(
-    await responseWithObservedUsage(
-      upstream,
-      model,
-      recordTokens,
-      request.signal,
-      bufferProxyBodies,
-      recordExtraction,
-    ),
+  return proxiedResponseWithOptionalUsage(
+    upstream,
+    model,
+    markUsage,
+    usageAccountingMode,
+    recordTokens,
+    recordExtraction,
+    bufferProxyBodies,
   );
 }
 
 async function handleCompletions(
   client: CopilotClient,
   metrics: MetricsRegistry,
+  markUsage: ResponseUsageMarker,
   recordTokens: TokenRecorder,
   recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const body = await readJson(request);
   const upstream = await client.chatCompletions(
@@ -640,42 +688,51 @@ async function handleCompletions(
   if (isStreamingResponse(upstream) && upstream.body) {
     if (bufferProxyBodies) {
       const upstreamText = await upstream.text();
-      recordResponseTextUsage(upstreamText, true, model, recordTokens, recordExtraction);
+      recordBufferedUsage(
+        upstreamText,
+        true,
+        model,
+        usageAccountingMode,
+        recordTokens,
+        recordExtraction,
+      );
       const text = completionSseTextFromChatSseText(upstreamText);
       return proxyResponse(responseFromText(upstream, text));
     }
-    return proxyResponse(
-      observeResponseUsage(
+    return markUsage(
+      proxyResponse(
         new Response(completionStreamFromChatStream(upstream.body), {
           headers: upstream.headers,
           status: upstream.status,
           statusText: upstream.statusText,
         }),
-        model,
-        recordTokens,
-        request.signal,
-        recordExtraction,
       ),
+      model,
+      "body",
     );
   }
   const completion = asRecord(await upstream.json());
-  const usage = extractTokenUsage(completion.usage);
-  if (usage) {
-    const responseModel = typeof completion.model === "string" ? completion.model.trim() : "";
-    recordTokens(responseModel || model, usage);
-  }
-  recordExtraction(usage !== undefined);
+  recordParsedUsage(
+    completion.usage,
+    typeof completion.model === "string" ? completion.model.trim() : model,
+    model,
+    usageAccountingMode,
+    recordTokens,
+    recordExtraction,
+  );
   return jsonResponse(chatCompletionToCompletion(completion));
 }
 
 async function handleResponses(
   client: CopilotClient,
   metrics: MetricsRegistry,
+  markUsage: ResponseUsageMarker,
   recordTokens: TokenRecorder,
   recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
   bufferProxyBodies: boolean,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const { json, text: body } = await readJsonText(request);
   if (isResponsesCompactionRequest(json)) {
@@ -687,6 +744,7 @@ async function handleResponses(
       json,
       request,
       logger,
+      usageAccountingMode,
     );
   }
 
@@ -702,15 +760,14 @@ async function handleResponses(
   }
   logUpstreamSuccess(logger, "/responses", upstream.status);
   const model = normalizeRequestedModel(json.model);
-  return proxyResponse(
-    await responseWithObservedUsage(
-      upstream,
-      model,
-      recordTokens,
-      request.signal,
-      bufferProxyBodies,
-      recordExtraction,
-    ),
+  return proxiedResponseWithOptionalUsage(
+    upstream,
+    model,
+    markUsage,
+    usageAccountingMode,
+    recordTokens,
+    recordExtraction,
+    bufferProxyBodies,
   );
 }
 
@@ -730,6 +787,7 @@ async function handleResponsesCompact(
   recordExtraction: ExtractionRecorder,
   request: Request,
   logger: HoopilotLogger,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const body = await readJson(request);
   const upstream = await client.responses(responsesCompactionRequestBody(body), request.signal);
@@ -740,10 +798,11 @@ async function handleResponsesCompact(
   logUpstreamSuccess(logger, "/responses", upstream.status);
   const isSse = isStreamingResponse(upstream);
   const text = await upstream.text();
-  recordResponseTextUsage(
+  recordBufferedUsage(
     text,
     isSse,
     normalizeRequestedModel(body.model),
+    usageAccountingMode,
     recordTokens,
     recordExtraction,
   );
@@ -758,6 +817,7 @@ async function handleResponsesCompactionV2(
   json: JsonObject,
   request: Request,
   logger: HoopilotLogger,
+  usageAccountingMode: UsageAccountingMode,
 ): Promise<Response> {
   const upstream = await client.responses(responsesCompactionRequestBody(json), request.signal);
   metrics.recordUpstream("/responses", upstream.ok);
@@ -768,28 +828,68 @@ async function handleResponsesCompactionV2(
   const isSse = isStreamingResponse(upstream);
   const text = await upstream.text();
   const model = normalizeRequestedModel(json.model);
-  recordResponseTextUsage(text, isSse, model, recordTokens, recordExtraction);
+  recordBufferedUsage(text, isSse, model, usageAccountingMode, recordTokens, recordExtraction);
   if (json.stream === true) {
     return textResponse(responsesCompactionSseText(text, isSse, model), "text/event-stream");
   }
   return jsonResponse(responsesCompactionResponse(text, isSse, model));
 }
 
-async function responseWithObservedUsage(
+async function proxiedResponseWithOptionalUsage(
   response: Response,
   fallbackModel: string,
+  markUsage: ResponseUsageMarker,
+  usageAccountingMode: UsageAccountingMode,
   recordTokens: TokenRecorder,
-  signal: AbortSignal,
-  bufferBody: boolean,
   recordExtraction: ExtractionRecorder,
+  bufferProxyBodies: boolean,
 ): Promise<Response> {
   const isSse = isStreamingResponse(response);
-  if (bufferBody && response.body) {
+  if (bufferProxyBodies && response.body) {
     const text = await response.text();
-    recordResponseTextUsage(text, isSse, fallbackModel, recordTokens, recordExtraction);
-    return responseFromText(response, text);
+    recordBufferedUsage(
+      text,
+      isSse,
+      fallbackModel,
+      usageAccountingMode,
+      recordTokens,
+      recordExtraction,
+    );
+    return proxyResponse(responseFromText(response, text));
   }
-  return observeResponseUsage(response, fallbackModel, recordTokens, signal, recordExtraction);
+  return markUsage(proxyResponse(response), fallbackModel, "body");
+}
+
+function recordParsedUsage(
+  rawUsage: unknown,
+  responseModel: string,
+  fallbackModel: string,
+  usageAccountingMode: UsageAccountingMode,
+  recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
+): void {
+  if (!shouldExtractUsage(usageAccountingMode, "parsed")) {
+    return;
+  }
+  const usage = extractTokenUsage(rawUsage);
+  if (usage) {
+    recordTokens(responseModel || fallbackModel, usage);
+  }
+  recordExtraction(usage !== undefined);
+}
+
+function recordBufferedUsage(
+  text: string,
+  isSse: boolean,
+  fallbackModel: string,
+  usageAccountingMode: UsageAccountingMode,
+  recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
+): void {
+  if (!shouldExtractUsage(usageAccountingMode, "buffered")) {
+    return;
+  }
+  recordResponseTextUsage(text, isSse, fallbackModel, recordTokens, recordExtraction);
 }
 
 async function proxyError(upstream: Response, logger: HoopilotLogger): Promise<Response> {
@@ -857,9 +957,34 @@ function shouldBufferProxyBodies(mode: StreamingProxyMode): boolean {
   return process.platform === "win32" && IS_STANDALONE_BINARY;
 }
 
+function resolveUsageAccountingMode(options: HoopilotServerOptions): UsageAccountingMode {
+  const value =
+    options.usageAccountingMode ?? envValue(options.env?.HOOPILOT_USAGE_ACCOUNTING) ?? "basic";
+  return parseUsageAccountingMode(value);
+}
+
+function resolveAccessLog(options: HoopilotServerOptions): boolean {
+  return (
+    options.accessLog ??
+    parseBooleanEnv(options.env?.HOOPILOT_ACCESS_LOG, "HOOPILOT_ACCESS_LOG") ??
+    false
+  );
+}
+
+function shouldExtractUsage(mode: UsageAccountingMode, cost: UsageExtractionCost): boolean {
+  if (mode === "off") {
+    return false;
+  }
+  if (mode === "basic") {
+    return cost === "parsed";
+  }
+  return true;
+}
+
 function finishResponse(
   response: Response,
   options: {
+    accessLog: boolean;
     closeConnection: boolean;
     corsOrigin: string | undefined;
     logger: HoopilotLogger;
@@ -867,10 +992,13 @@ function finishResponse(
     metrics: MetricsRegistry;
     requestId: string;
     route: string;
+    signal: AbortSignal;
     startedAt: number;
     trackStreamingBody: boolean;
+    usageObservation?: ResponseUsageObservation;
   },
 ): Response {
+  const usageObservation = options.usageObservation;
   const withRequestId = responseWithRequestId(
     response,
     options.requestId,
@@ -883,11 +1011,37 @@ function finishResponse(
   // that is when the client finishes receiving (or aborts) — so the in-flight
   // gauge and duration histogram reflect the full serving lifetime, not just the
   // time to upstream headers.
+  let completed = false;
   const complete = (): void => {
+    if (completed) {
+      return;
+    }
+    completed = true;
     const durationMs = Math.round((performance.now() - options.startedAt) * 100) / 100;
     options.metrics.observe({ durationMs, method: options.method, route: options.route, status });
-    logRequestCompleted(options.logger, status, stream, durationMs);
+    logRequestCompleted(options.logger, status, stream, durationMs, options.accessLog);
   };
+
+  if (withRequestId.body && usageObservation) {
+    const shouldTrackCompletion = stream && options.trackStreamingBody;
+    const observedBody = streamWithUsageObservation(
+      withRequestId.body,
+      stream,
+      usageObservation.fallbackModel,
+      usageObservation.recordTokens,
+      options.signal,
+      usageObservation.recordExtraction,
+      shouldTrackCompletion ? complete : undefined,
+    );
+    if (!shouldTrackCompletion) {
+      complete();
+    }
+    return new Response(observedBody, {
+      headers: withRequestId.headers,
+      status,
+      statusText: withRequestId.statusText,
+    });
+  }
 
   if (stream && withRequestId.body && options.trackStreamingBody) {
     return new Response(trackStreamCompletion(withRequestId.body, complete), {
@@ -983,6 +1137,7 @@ function logRequestCompleted(
   status: number,
   stream: boolean,
   durationMs: number,
+  accessLog: boolean,
 ): void {
   const fields: LogFields = {
     durationMs,
@@ -996,6 +1151,9 @@ function logRequestCompleted(
   }
   if (status >= 400) {
     logger.warn(fields, "request completed with client error");
+    return;
+  }
+  if (!accessLog) {
     return;
   }
   logger.info(fields, "request completed");
@@ -1049,14 +1207,19 @@ const API_ROUTES: ReadonlyArray<{ method: string; path: string; name: string }> 
   { method: "POST", path: "/v1/responses/compact", name: "responses_compact" },
   { method: "POST", path: "/v1/responses", name: "responses" },
 ];
+const ROUTE_NAMES = new Map(
+  API_ROUTES.map((entry) => [routeKey(entry.method, entry.path), entry.name]),
+);
 
 function routeFor(method: string, path: string): string {
   if (method === "OPTIONS") {
     return "cors.preflight";
   }
-  return (
-    API_ROUTES.find((entry) => entry.method === method && entry.path === path)?.name ?? "not_found"
-  );
+  return ROUTE_NAMES.get(routeKey(method, path)) ?? "not_found";
+}
+
+function routeKey(method: string, path: string): string {
+  return `${method} ${path}`;
 }
 
 function isStreamingResponse(response: Response): boolean {
@@ -1146,12 +1309,25 @@ export function createUsageReader(
 ): UsageReader {
   const usagePath = "/copilot_internal/user";
   let cache: { atMs: number; result: UsageReadResult } | undefined;
-  return async (signal) => {
+  let inFlight: Promise<UsageReadResult> | undefined;
+  return async () => {
     if (cache && now() - cache.atMs < ttlMs) {
       return cache.result;
     }
+    if (inFlight) {
+      return inFlight;
+    }
+    inFlight = readFreshUsage();
     try {
-      const upstream = await client.usage(signal);
+      return await inFlight;
+    } finally {
+      inFlight = undefined;
+    }
+  };
+
+  async function readFreshUsage(): Promise<UsageReadResult> {
+    try {
+      const upstream = await client.usage();
       metrics.recordUpstream(usagePath, upstream.ok);
       // api.github.com returns the x-ratelimit-* budget on every reply — on the
       // error path too, where retry-after / a spent budget is the useful signal —
@@ -1176,5 +1352,5 @@ export function createUsageReader(
       cache = { atMs: now(), result };
       return result;
     }
-  };
+  }
 }

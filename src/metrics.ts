@@ -23,6 +23,8 @@ const DURATION_BUCKETS_SECONDS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60] a
 
 /** Cap on bytes buffered or scanned while extracting usage from a response body. */
 const USAGE_BUFFER_LIMIT_BYTES = 16 * 1024 * 1024;
+const PROMETHEUS_CACHE_TTL_MS = 1_000;
+const PROMETHEUS_CACHE_NEUTRAL_ROUTES = new Set(["metrics"]);
 
 /** Bound the distinct model labels so a hostile client cannot blow up cardinality. */
 const MAX_TRACKED_MODELS = 200;
@@ -45,6 +47,10 @@ function emptyModelTotals(): ModelTokenTotals {
   return { cached: 0, completion: 0, prompt: 0, reasoning: 0, requests: 0, total: 0 };
 }
 
+function isPrometheusCacheNeutralRoute(route: string | undefined): boolean {
+  return route !== undefined && PROMETHEUS_CACHE_NEUTRAL_ROUTES.has(route);
+}
+
 /**
  * In-process metrics for the running proxy. Counters are monotonic for the life
  * of the process and reset on restart, which Prometheus handles natively. The
@@ -62,6 +68,8 @@ export class MetricsRegistry {
   #copilotQuota?: CopilotUsage;
   #githubRateLimit = new Map<string, GithubRateLimit>();
   #extraction = { extracted: 0, missing: 0 };
+  #generation = 0;
+  #prometheusCache?: { generation: number; renderedAtMs: number; text: string };
 
   constructor(options: { now?: () => number } = {}) {
     this.#startedAtMs = (options.now ?? Date.now)();
@@ -69,6 +77,9 @@ export class MetricsRegistry {
 
   /** Mark a request as started; pair with exactly one {@link observe}. */
   startRequest(route?: string): void {
+    if (!isPrometheusCacheNeutralRoute(route)) {
+      this.#changed();
+    }
     this.#inFlight += 1;
     if (route) {
       this.#inFlightByRoute.set(route, (this.#inFlightByRoute.get(route) ?? 0) + 1);
@@ -77,6 +88,9 @@ export class MetricsRegistry {
 
   /** Record a completed request and clear its in-flight slot. */
   observe(observation: RequestObservation): void {
+    if (!isPrometheusCacheNeutralRoute(observation.route)) {
+      this.#changed();
+    }
     if (this.#inFlight > 0) {
       this.#inFlight -= 1;
     }
@@ -98,6 +112,7 @@ export class MetricsRegistry {
    * rising miss rate flags clients whose token usage is going unaccounted.
    */
   recordTokenExtraction(extracted: boolean): void {
+    this.#changed();
     if (extracted) {
       this.#extraction.extracted += 1;
     } else {
@@ -107,6 +122,7 @@ export class MetricsRegistry {
 
   /** Accumulate token counts for a model from one upstream completion. */
   recordTokens(model: string, usage: TokenUsage): void {
+    this.#changed();
     const name = this.#modelLabel(model);
     const totals = this.#tokens.get(name) ?? emptyModelTotals();
     totals.requests += 1;
@@ -120,12 +136,14 @@ export class MetricsRegistry {
 
   /** Record one upstream Copilot call and whether it succeeded. */
   recordUpstream(path: string, ok: boolean): void {
+    this.#changed();
     const key = labelKey(path, ok ? "ok" : "error");
     this.#upstream.set(key, (this.#upstream.get(key) ?? 0) + 1);
   }
 
   /** Store the latest Copilot quota so /metrics can expose it as gauges. */
   recordCopilotQuota(usage: CopilotUsage): void {
+    this.#changed();
     this.#copilotQuota = usage;
   }
 
@@ -138,6 +156,7 @@ export class MetricsRegistry {
     if (!rateLimit) {
       return;
     }
+    this.#changed();
     const resource = this.#rateLimitResource(rateLimit.resource);
     this.#githubRateLimit.set(resource, { ...rateLimit, resource });
   }
@@ -183,6 +202,10 @@ export class MetricsRegistry {
       entry.buckets[index] = (entry.buckets[index] ?? 0) + 1;
     }
     this.#durations.set(route, entry);
+  }
+
+  #changed(): void {
+    this.#generation += 1;
   }
 
   /** A JSON-friendly view of the current counters. */
@@ -295,6 +318,16 @@ export class MetricsRegistry {
 
   /** Render the Prometheus text exposition format (version 0.0.4). */
   renderPrometheus(now: () => number = Date.now): string {
+    const nowMs = now();
+    const cached = this.#prometheusCache;
+    if (
+      cached &&
+      cached.generation === this.#generation &&
+      nowMs - cached.renderedAtMs < PROMETHEUS_CACHE_TTL_MS
+    ) {
+      return cached.text;
+    }
+
     const lines: string[] = [];
 
     lines.push("# HELP hoopilot_process_start_time_seconds Unix epoch when the proxy started.");
@@ -303,7 +336,7 @@ export class MetricsRegistry {
 
     lines.push("# HELP hoopilot_uptime_seconds Seconds since the proxy started.");
     lines.push("# TYPE hoopilot_uptime_seconds gauge");
-    lines.push(`hoopilot_uptime_seconds ${Math.max(0, (now() - this.#startedAtMs) / 1000)}`);
+    lines.push(`hoopilot_uptime_seconds ${Math.max(0, (nowMs - this.#startedAtMs) / 1000)}`);
 
     lines.push("# HELP hoopilot_requests_in_flight Requests currently being served.");
     lines.push("# TYPE hoopilot_requests_in_flight gauge");
@@ -378,7 +411,9 @@ export class MetricsRegistry {
     this.#renderGithubRateLimit(lines);
     this.#renderCopilotQuota(lines);
 
-    return `${lines.join("\n")}\n`;
+    const text = `${lines.join("\n")}\n`;
+    this.#prometheusCache = { generation: this.#generation, renderedAtMs: nowMs, text };
+    return text;
   }
 
   #renderGithubRateLimit(lines: string[]): void {
@@ -597,16 +632,18 @@ export function recordResponseTextUsage(
   accumulator.finish();
 }
 
-function streamWithUsageObservation(
+export function streamWithUsageObservation(
   stream: ReadableStream<Uint8Array>,
   isSse: boolean,
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
   signal?: AbortSignal,
   onOutcome?: (extracted: boolean) => void,
+  onComplete?: () => void,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let aborted = signal?.aborted ?? false;
+  let completed = false;
   let released = false;
   const onAbort = () => {
     aborted = true;
@@ -639,6 +676,10 @@ function streamWithUsageObservation(
     }
     released = true;
     signal?.removeEventListener("abort", onAbort);
+    if (!completed) {
+      completed = true;
+      onComplete?.();
+    }
     reader.releaseLock();
   };
 
@@ -760,6 +801,9 @@ function safeFinishAccumulator(accumulator: { finish: () => void }): void {
 function considerSseLine(line: string, consider: (payload: unknown) => void): void {
   const data = sseDataFromLine(line);
   if (!data || data === "[DONE]") {
+    return;
+  }
+  if (!data.includes('"usage"')) {
     return;
   }
   const parsed = safeJsonParse(data);

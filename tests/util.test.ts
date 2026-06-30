@@ -4,6 +4,8 @@ import {
   envValue,
   isHttpsOrLoopbackUrl,
   isTrustedTokenBaseUrl,
+  parseBooleanEnv,
+  parseUsageAccountingMode,
   trimTrailingSlash,
   truncatedResponseText,
 } from "../src/util";
@@ -14,6 +16,19 @@ describe("utility helpers", () => {
     expect(envValue(" value ")).toBe("value");
     expect(envValue(" \t ")).toBeUndefined();
     expect(envValue(undefined)).toBeUndefined();
+  });
+
+  it("parses low-power server option values", () => {
+    expect(parseUsageAccountingMode("full")).toBe("full");
+    expect(parseUsageAccountingMode("basic")).toBe("basic");
+    expect(parseUsageAccountingMode("off")).toBe("off");
+    expect(() => parseUsageAccountingMode("cheap")).toThrow("Invalid usage accounting mode");
+
+    expect(parseBooleanEnv("1", "FLAG")).toBe(true);
+    expect(parseBooleanEnv("false", "FLAG")).toBe(false);
+    expect(parseBooleanEnv(" off ", "FLAG")).toBe(false);
+    expect(parseBooleanEnv(undefined, "FLAG")).toBeUndefined();
+    expect(() => parseBooleanEnv("maybe", "FLAG")).toThrow("FLAG must be one of");
   });
 
   it("recognizes HTTPS and loopback HTTP URLs", () => {

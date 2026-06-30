@@ -12,6 +12,7 @@ export type LogFields = Record<string, unknown>;
 export type LogFormat = "json" | "pretty";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "silent";
 export type StreamingProxyMode = "auto" | "buffer" | "live";
+export type UsageAccountingMode = "basic" | "full" | "off";
 
 export interface LogMethod {
   (message: string): void;
@@ -57,6 +58,7 @@ export interface CopilotAccess {
 }
 
 export interface HoopilotServerOptions extends CopilotAuthOptions {
+  accessLog?: boolean;
   allowUnauthenticated?: boolean;
   apiKey?: string;
   host?: string;
@@ -66,6 +68,7 @@ export interface HoopilotServerOptions extends CopilotAuthOptions {
   metrics?: MetricsRegistry;
   port?: number;
   streamingProxyMode?: StreamingProxyMode | (string & {});
+  usageAccountingMode?: UsageAccountingMode | (string & {});
 }
 
 export interface StartedHoopilotServer {

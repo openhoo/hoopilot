@@ -1,4 +1,4 @@
-import type { JsonObject, StreamingProxyMode } from "./types";
+import type { JsonObject, StreamingProxyMode, UsageAccountingMode } from "./types";
 
 /** Remove any trailing slashes from a URL or path string. */
 export function trimTrailingSlash(value: string): string {
@@ -148,10 +148,42 @@ export const STREAMING_PROXY_MODES = [
   "live",
 ] as const satisfies readonly StreamingProxyMode[];
 
+/** Canonical set of accepted token/accounting modes, kept in sync with {@link UsageAccountingMode}. */
+export const USAGE_ACCOUNTING_MODES = [
+  "basic",
+  "full",
+  "off",
+] as const satisfies readonly UsageAccountingMode[];
+
 /** Validate a stream-mode string against the allowed {@link StreamingProxyMode} values. */
 export function parseStreamingProxyMode(value: string): StreamingProxyMode {
   if ((STREAMING_PROXY_MODES as readonly string[]).includes(value)) {
     return value as StreamingProxyMode;
   }
   throw new Error(`Invalid stream mode: ${value}. Expected ${STREAMING_PROXY_MODES.join(", ")}.`);
+}
+
+/** Validate a usage-accounting string against the allowed {@link UsageAccountingMode} values. */
+export function parseUsageAccountingMode(value: string): UsageAccountingMode {
+  if ((USAGE_ACCOUNTING_MODES as readonly string[]).includes(value)) {
+    return value as UsageAccountingMode;
+  }
+  throw new Error(
+    `Invalid usage accounting mode: ${value}. Expected ${USAGE_ACCOUNTING_MODES.join(", ")}.`,
+  );
+}
+
+/** Parse common environment boolean spellings. */
+export function parseBooleanEnv(value: string | undefined, name: string): boolean | undefined {
+  const raw = envValue(value)?.toLowerCase();
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") {
+    return true;
+  }
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") {
+    return false;
+  }
+  throw new Error(`${name} must be one of: 1, 0, true, false, yes, no, on, off.`);
 }

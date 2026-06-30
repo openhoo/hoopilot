@@ -217,9 +217,10 @@ describe("createHoopilotHandler", () => {
     expect(blocked.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("adds request ids and emits structured request completion logs", async () => {
+  it("adds request ids and can emit structured request completion logs", async () => {
     const logs = captureLogger();
     const handler = createHoopilotHandler({
+      accessLog: true,
       env: {},
       fetch: unusedFetch,
       logger: logs.logger,
@@ -246,6 +247,32 @@ describe("createHoopilotHandler", () => {
         }),
         level: "info",
         message: "request completed",
+      }),
+    );
+  });
+
+  it("suppresses successful access logs by default while keeping error logs", async () => {
+    const logs = captureLogger();
+    const handler = createHoopilotHandler({
+      env: {},
+      fetch: unusedFetch,
+      logger: logs.logger,
+    });
+
+    const ok = await handler(new Request("http://localhost/healthz"));
+    expect(ok.status).toBe(200);
+    expect(logs.entries).not.toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({ event: "http.request.completed", status: 200 }),
+      }),
+    );
+
+    const missing = await handler(new Request("http://localhost/missing"));
+    expect(missing.status).toBe(404);
+    expect(logs.entries).toContainEqual(
+      expect.objectContaining({
+        fields: expect.objectContaining({ event: "http.request.completed", status: 404 }),
+        level: "warn",
       }),
     );
   });
@@ -691,6 +718,7 @@ describe("createHoopilotHandler", () => {
       ),
       metrics,
       streamingProxyMode: "buffer",
+      usageAccountingMode: "full",
     });
 
     const response = await handler(
@@ -1396,6 +1424,7 @@ describe("metrics and usage endpoints", () => {
         }),
       ),
       metrics,
+      usageAccountingMode: "full",
     });
 
     const response = await handler(
@@ -1550,6 +1579,7 @@ describe("metrics and usage endpoints", () => {
         }),
       ),
       metrics,
+      usageAccountingMode: "full",
     });
 
     const response = await handler(
@@ -1566,6 +1596,90 @@ describe("metrics and usage endpoints", () => {
       prompt: 12,
       total: 17,
     });
+  });
+
+  it("defaults to low-resource usage accounting for pass-through response bodies", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          choices: [{ message: { content: "hi", role: "assistant" } }],
+          model: "gpt-4.1",
+          usage: { completion_tokens: 3, prompt_tokens: 7, total_tokens: 10 },
+        }),
+      ),
+      metrics,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/chat/completions", {
+        body: JSON.stringify({ messages: [{ content: "hi", role: "user" }], model: "gpt-4.1" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+    await tick();
+
+    const snapshot = metrics.snapshot();
+    expect(snapshot.requests.byRoute.chat_completions).toBe(1);
+    expect(snapshot.upstream).toEqual({ errors: 0, total: 1 });
+    expect(snapshot.tokens.byModel).toEqual({});
+    expect(snapshot.tokens.extraction).toEqual({ extracted: 0, missing: 0 });
+  });
+
+  it("basic usage accounting still records usage from already parsed compatibility responses", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "legacy", role: "assistant" } }],
+          model: "gpt-4.1",
+          usage: { completion_tokens: 4, prompt_tokens: 6, total_tokens: 10 },
+        }),
+      ),
+      metrics,
+      usageAccountingMode: "basic",
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: "hello" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+
+    expect(metrics.snapshot().tokens.byModel["gpt-4.1"]).toMatchObject({
+      completion: 4,
+      prompt: 6,
+      total: 10,
+    });
+  });
+
+  it("off usage accounting skips parsed compatibility token usage", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () =>
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "legacy", role: "assistant" } }],
+          model: "gpt-4.1",
+          usage: { completion_tokens: 4, prompt_tokens: 6, total_tokens: 10 },
+        }),
+      ),
+      metrics,
+      usageAccountingMode: "off",
+    });
+
+    const response = await handler(
+      new Request("http://localhost/v1/completions", {
+        body: JSON.stringify({ model: "gpt-4.1", prompt: "hello" }),
+        method: "POST",
+      }),
+    );
+    await response.json();
+
+    expect(metrics.snapshot().tokens.byModel).toEqual({});
+    expect(metrics.snapshot().tokens.extraction).toEqual({ extracted: 0, missing: 0 });
   });
 
   it("caches the Copilot quota within the TTL and refetches after it expires", async () => {
@@ -1593,6 +1707,38 @@ describe("metrics and usage endpoints", () => {
     await read();
     expect(calls).toBe(2);
     expect(metrics.snapshot().upstream.total).toBe(2);
+  });
+
+  it("coalesces concurrent Copilot quota cache misses", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const unblock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () => {
+        calls += 1;
+        await unblock;
+        return Response.json({
+          copilot_plan: "individual_pro",
+          quota_snapshots: { premium_interactions: { entitlement: 300, remaining: 290 } },
+        });
+      },
+    });
+    const metrics = new MetricsRegistry();
+    const read = createUsageReader(client, metrics, () => 1_000, 60_000);
+
+    const first = read();
+    const second = read();
+    await tick();
+    expect(calls).toBe(1);
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(calls).toBe(1);
+    expect(metrics.snapshot().upstream.total).toBe(1);
   });
 
   it("captures GitHub REST rate-limit headers from the quota response", async () => {
