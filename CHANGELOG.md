@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.9 (2026-06-30)
+
+### Performance
+
+- default to low resource usage (fa94d52)
+
 ## 2.1.8 (2026-06-30)
 
 ### Other Changes
