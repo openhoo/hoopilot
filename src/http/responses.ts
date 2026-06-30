@@ -1,6 +1,18 @@
 import { asRecord, safeJsonParse } from "../util";
 import { corsHeaders } from "./security";
 
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+] as const;
+const STALE_BODY_HEADERS = ["content-encoding", "content-length"] as const;
+
 export function jsonResponse(body: object, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: {
@@ -44,9 +56,7 @@ export function responseFromText(source: Response, text: string): Response {
 
 export function proxyResponse(upstream: Response): Response {
   const headers = new Headers(upstream.headers);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  headers.delete("transfer-encoding");
+  stripProxyUnsafeHeaders(headers);
   for (const [key, value] of Object.entries(corsHeaders())) {
     headers.set(key, value);
   }
@@ -73,4 +83,22 @@ export function websocketUnsupportedResponse(): Response {
   );
   response.headers.set("upgrade", "websocket");
   return response;
+}
+
+function stripProxyUnsafeHeaders(headers: Headers): void {
+  const connection = headers.get("connection");
+  if (connection) {
+    for (const name of connection.split(",")) {
+      const trimmed = name.trim();
+      if (trimmed) {
+        headers.delete(trimmed);
+      }
+    }
+  }
+  for (const name of HOP_BY_HOP_HEADERS) {
+    headers.delete(name);
+  }
+  for (const name of STALE_BODY_HEADERS) {
+    headers.delete(name);
+  }
 }

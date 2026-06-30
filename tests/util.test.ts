@@ -3,6 +3,7 @@ import {
   asRecord,
   envValue,
   isHttpsOrLoopbackUrl,
+  isLoopbackHostname,
   isTrustedTokenBaseUrl,
   parseBooleanEnv,
   parseUsageAccountingMode,
@@ -35,9 +36,20 @@ describe("utility helpers", () => {
     expect(isHttpsOrLoopbackUrl("https://api.example.test")).toBe(true);
     expect(isHttpsOrLoopbackUrl("http://localhost:4141")).toBe(true);
     expect(isHttpsOrLoopbackUrl("http://127.0.0.1:4141")).toBe(true);
+    expect(isHttpsOrLoopbackUrl("http://127.12.34.56:4141")).toBe(true);
     expect(isHttpsOrLoopbackUrl("http://[::1]:4141")).toBe(true);
     expect(isHttpsOrLoopbackUrl("http://api.example.test")).toBe(false);
     expect(isHttpsOrLoopbackUrl("not a url")).toBe(false);
+  });
+
+  it("recognizes loopback hostnames precisely", () => {
+    expect(isLoopbackHostname("localhost")).toBe(true);
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("127.12.34.56")).toBe(true);
+    expect(isLoopbackHostname("[::1]")).toBe(true);
+    expect(isLoopbackHostname("0:0:0:0:0:0:0:1")).toBe(true);
+    expect(isLoopbackHostname("192.168.1.10")).toBe(false);
+    expect(isLoopbackHostname("example.localhost")).toBe(false);
   });
 
   it("accepts only trusted token base URLs by default", () => {
@@ -46,6 +58,7 @@ describe("utility helpers", () => {
     expect(isTrustedTokenBaseUrl("https://API.EXAMPLE.TEST/", allowedHosts)).toBe(true);
     expect(isTrustedTokenBaseUrl("http://localhost:4141", allowedHosts)).toBe(true);
     expect(isTrustedTokenBaseUrl("http://127.0.0.1:4141", allowedHosts)).toBe(true);
+    expect(isTrustedTokenBaseUrl("http://127.12.34.56:4141", allowedHosts)).toBe(true);
     expect(isTrustedTokenBaseUrl("http://[::1]:4141", allowedHosts)).toBe(true);
 
     expect(isTrustedTokenBaseUrl("not a url", allowedHosts)).toBe(false);

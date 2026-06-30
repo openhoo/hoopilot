@@ -177,7 +177,7 @@ install_codexx_wrapper
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
-    printf 'note: %s is not on your PATH. Add this to your shell profile:\n  export PATH="%s:$PATH"\n' \
+    printf "note: %s is not on your PATH. Add this to your shell profile:\n  export PATH=\"%s:\$PATH\"\n" \
       "$INSTALL_DIR" "$INSTALL_DIR" >&2
     ;;
 esac

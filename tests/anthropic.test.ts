@@ -318,6 +318,28 @@ describe("anthropicMessagesToResponsesRequest", () => {
         request: { messages: [{ content: "hi", role: "user" }], tool_choice: { type: "weird" } },
       },
       {
+        message: "tool_choice name",
+        request: {
+          messages: [{ content: "hi", role: "user" }],
+          tool_choice: { name: " ", type: "tool" },
+        },
+      },
+      {
+        message: "tool name",
+        request: {
+          messages: [{ content: "hi", role: "user" }],
+          tools: [{ input_schema: { type: "object" } }],
+        },
+      },
+      {
+        message: "tool_use name",
+        request: {
+          messages: [
+            { content: [{ id: "toolu_1", input: {}, type: "tool_use" }], role: "assistant" },
+          ],
+        },
+      },
+      {
         message: 'cache_control ttl "24h"',
         request: {
           cache_control: { ttl: "24h", type: "ephemeral" },

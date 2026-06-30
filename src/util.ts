@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { JsonObject, StreamingProxyMode, UsageAccountingMode } from "./types";
 
 /** Remove any trailing slashes from a URL or path string. */
@@ -56,11 +57,18 @@ function parseUrl(rawUrl: string): URL | undefined {
   return url;
 }
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-
 /** True for hostnames that always resolve to the local machine. */
 export function isLoopbackHostname(host: string): boolean {
-  return LOOPBACK_HOSTNAMES.has(host);
+  const normalized = host.trim().toLowerCase();
+  const address =
+    normalized.startsWith("[") && normalized.endsWith("]") ? normalized.slice(1, -1) : normalized;
+  if (address === "localhost") {
+    return true;
+  }
+  if (isIP(address) === 4) {
+    return address.startsWith("127.");
+  }
+  return isIP(address) === 6 && (address === "::1" || address === "0:0:0:0:0:0:0:1");
 }
 
 function isLoopbackHttpUrl(url: URL): boolean {

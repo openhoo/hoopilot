@@ -222,7 +222,7 @@ function anthropicMessagesToResponsesInput(messages: unknown): JsonObject[] {
             arguments: JSON.stringify(asRecord(part.input)),
             cache_control: anthropicCacheControl(part.cache_control),
             call_id: textValue(part.id) || `call_hoopilot_${fallbackToolCallIndex++}`,
-            name: textValue(part.name),
+            name: requiredAnthropicText(part.name, "tool_use name"),
             type: "function_call",
           }),
         );
@@ -386,7 +386,7 @@ function anthropicTools(tools: unknown): JsonObject[] | undefined {
     return removeUndefined({
       cache_control: anthropicCacheControl(record.cache_control),
       description: record.description,
-      name: record.name,
+      name: requiredAnthropicText(record.name, "tool name"),
       parameters: record.input_schema,
       strict: record.strict,
       type: "function",
@@ -465,11 +465,19 @@ function anthropicToolChoice(toolChoice: unknown): unknown {
     return "none";
   }
   if (type === "tool") {
-    return { name: textValue(record.name), type: "function" };
+    return { name: requiredAnthropicText(record.name, "tool_choice name"), type: "function" };
   }
   throw new AnthropicCompatibilityError(
     `Anthropic tool_choice type "${type || "unknown"}" is not supported.`,
   );
+}
+
+function requiredAnthropicText(value: unknown, field: string): string {
+  const text = textValue(value).trim();
+  if (!text) {
+    throw new AnthropicCompatibilityError(`Anthropic ${field} is required.`);
+  }
+  return text;
 }
 
 function anthropicThinkingToReasoning(thinking: unknown): JsonObject | undefined {

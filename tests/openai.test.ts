@@ -156,8 +156,18 @@ describe("responsesRequestToChatCompletion", () => {
       },
       {
         input: [{ content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" }],
+        message: "function tool name",
+        tools: [{ parameters: { type: "object" }, type: "function" }],
+      },
+      {
+        input: [{ content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" }],
         message: 'tool_choice type "web_search_preview"',
         tool_choice: { type: "web_search_preview" },
+      },
+      {
+        input: [{ content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" }],
+        message: "function tool_choice name",
+        tool_choice: { name: " ", type: "function" },
       },
     ];
 

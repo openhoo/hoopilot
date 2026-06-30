@@ -109,7 +109,7 @@ interface UsageReadResult {
   error?: string;
 }
 
-type UsageReader = (signal?: AbortSignal) => Promise<UsageReadResult>;
+type UsageReader = () => Promise<UsageReadResult>;
 type TokenRecorder = (model: string, usage: TokenUsage) => void;
 type ExtractionRecorder = (extracted: boolean) => void;
 type UsageExtractionCost = "body" | "buffered" | "parsed";
@@ -1275,7 +1275,7 @@ async function handleUsage(
   request: Request,
 ): Promise<Response> {
   const view = new URL(request.url).searchParams.get("view");
-  const { copilot, error } = await readUsage(request.signal);
+  const { copilot, error } = await readUsage();
   const proxy =
     view === DASHBOARD_USAGE_VIEW
       ? metrics.snapshot({
@@ -1310,6 +1310,9 @@ export function createUsageReader(
   const usagePath = "/copilot_internal/user";
   let cache: { atMs: number; result: UsageReadResult } | undefined;
   let inFlight: Promise<UsageReadResult> | undefined;
+  // Quota reads are cached and coalesced across dashboard/API callers. Keep the
+  // shared refresh independent of any one request's abort signal; otherwise one
+  // closed browser tab could cancel and cache an error for every other waiter.
   return async () => {
     if (cache && now() - cache.atMs < ttlMs) {
       return cache.result;

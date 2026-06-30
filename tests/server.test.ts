@@ -1908,7 +1908,20 @@ describe("Elysia routing layer", () => {
     const streaming = createHoopilotHandler(
       oauthOptions(
         async () =>
-          new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }),
+          new Response("data: {}\n\n", {
+            headers: {
+              connection: "keep-alive, x-upstream-hop",
+              "content-encoding": "gzip",
+              "content-length": "99",
+              "content-type": "text/event-stream",
+              "keep-alive": "timeout=5",
+              te: "trailers",
+              "transfer-encoding": "chunked",
+              upgrade: "websocket",
+              "x-end-to-end": "kept",
+              "x-upstream-hop": "drop",
+            },
+          }),
       ),
     );
     const sse = await streaming(
@@ -1918,12 +1931,18 @@ describe("Elysia routing layer", () => {
     for (const header of [
       "x-powered-by",
       "server",
+      "connection",
       "content-encoding",
       "content-length",
+      "keep-alive",
+      "te",
       "transfer-encoding",
+      "upgrade",
+      "x-upstream-hop",
     ]) {
       expect(sse.headers.get(header)).toBeNull();
     }
+    expect(sse.headers.get("x-end-to-end")).toBe("kept");
 
     const handler = createHoopilotHandler({ env: {}, fetch: unusedFetch });
     const health = await handler(new Request("http://localhost/healthz"));

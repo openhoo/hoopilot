@@ -806,7 +806,7 @@ function chatTools(tools: unknown): JsonObject[] | undefined {
     return {
       function: removeUndefined({
         description: record.description,
-        name: record.name,
+        name: requiredResponsesText(record.name, "function tool name"),
         parameters: record.parameters,
         strict: record.strict,
       }),
@@ -822,10 +822,23 @@ function chatToolChoice(toolChoice: unknown): unknown {
   }
   const record = asRecord(toolChoice);
   const type = contentToText(record.type);
-  if (type === "function" && typeof record.name === "string") {
-    return { function: { name: record.name }, type: "function" };
+  if (type === "function") {
+    return {
+      function: { name: requiredResponsesText(record.name, "function tool_choice name") },
+      type: "function",
+    };
   }
   unsupportedResponsesFeature(`tool_choice type "${type || "unknown"}"`);
+}
+
+function requiredResponsesText(value: unknown, field: string): string {
+  const text = contentToText(value).trim();
+  if (!text) {
+    throw new OpenAICompatibilityError(
+      `Hoopilot Responses-to-chat compatibility requires ${field}.`,
+    );
+  }
+  return text;
 }
 
 function unsupportedResponsesFeature(feature: string): never {
