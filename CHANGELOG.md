@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.4 (2026-06-30)
+
+### Bug Fixes
+
+- time out stalled Copilot streams (ac75c84)
+
 ## 2.1.3 (2026-06-30)
 
 ### Bug Fixes
