@@ -88,6 +88,15 @@ const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const REQUEST_TOO_LARGE_MESSAGE = `Request body must be ${MAX_REQUEST_BODY_BYTES} bytes or smaller.`;
 const USAGE_CACHE_TTL_MS = 60_000;
+const DASHBOARD_USAGE_VIEW = "dashboard";
+const DASHBOARD_EXCLUDED_ROUTES = [
+  "cors.preflight",
+  "dashboard",
+  "health",
+  "metrics",
+  "usage",
+] as const;
+const DASHBOARD_EXCLUDED_UPSTREAM_PATHS = ["/copilot_internal/user"] as const;
 
 interface UsageReadResult {
   copilot?: CopilotUsage;
@@ -165,7 +174,7 @@ export function createHoopilotHandler(
       requestId,
       route,
     });
-    metrics.startRequest();
+    metrics.startRequest(route);
     const origin = request.headers.get("origin")?.trim() || undefined;
     const corsOrigin = resolveCorsAllowOrigin(origin, allowedOrigins);
 
@@ -372,7 +381,7 @@ function buildApp(deps: ServerDeps) {
       .get("/", () => jsonResponse({ name: "hoopilot", object: "health", status: "ok" }))
       .get("/healthz", () => jsonResponse({ name: "hoopilot", object: "health", status: "ok" }))
       .get("/metrics", () => metricsResponse(metrics))
-      .get("/v1/usage", ({ request }) => handleUsage(metrics, readUsage, request.signal))
+      .get("/v1/usage", ({ request }) => handleUsage(metrics, readUsage, request))
       .get("/v1/models", ({ request }) =>
         handleModels(client, metrics, request.signal, loggerFor(request)),
       )
@@ -1377,10 +1386,17 @@ function dashboardResponse(): Response {
 async function handleUsage(
   metrics: MetricsRegistry,
   readUsage: UsageReader,
-  signal: AbortSignal,
+  request: Request,
 ): Promise<Response> {
-  const { copilot, error } = await readUsage(signal);
-  const proxy = metrics.snapshot();
+  const view = new URL(request.url).searchParams.get("view");
+  const { copilot, error } = await readUsage(request.signal);
+  const proxy =
+    view === DASHBOARD_USAGE_VIEW
+      ? metrics.snapshot({
+          excludeRoutes: DASHBOARD_EXCLUDED_ROUTES,
+          excludeUpstreamPaths: DASHBOARD_EXCLUDED_UPSTREAM_PATHS,
+        })
+      : metrics.snapshot();
   const body: UsageResponseBody = {
     copilot: copilot ?? null,
     object: "usage",
@@ -1406,10 +1422,10 @@ export function createUsageReader(
   ttlMs = USAGE_CACHE_TTL_MS,
 ): UsageReader {
   const usagePath = "/copilot_internal/user";
-  let cache: { atMs: number; value: CopilotUsage } | undefined;
+  let cache: { atMs: number; result: UsageReadResult } | undefined;
   return async (signal) => {
     if (cache && now() - cache.atMs < ttlMs) {
-      return { copilot: cache.value };
+      return cache.result;
     }
     try {
       const upstream = await client.usage(signal);
@@ -1419,18 +1435,23 @@ export function createUsageReader(
       // so capture it off the quota call without spending an extra request.
       metrics.recordGithubRateLimit(parseRateLimitHeaders(upstream.headers, now()));
       if (!upstream.ok) {
-        return { error: `GitHub Copilot usage request failed with ${upstream.status}.` };
+        const result = { error: `GitHub Copilot usage request failed with ${upstream.status}.` };
+        cache = { atMs: now(), result };
+        return result;
       }
       const value = normalizeCopilotUsage(await upstream.json().catch(() => ({})));
-      cache = { atMs: now(), value };
+      const result = { copilot: value };
+      cache = { atMs: now(), result };
       metrics.recordCopilotQuota(value);
-      return { copilot: value };
+      return result;
     } catch (error) {
       if (error instanceof CopilotAuthError) {
         return { error: error.message };
       }
       metrics.recordUpstream(usagePath, false);
-      return { error: errorMessage(error) };
+      const result = { error: errorMessage(error) };
+      cache = { atMs: now(), result };
+      return result;
     }
   };
 }

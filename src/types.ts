@@ -207,6 +207,13 @@ export interface MetricsSnapshot {
   uptimeSeconds: number;
 }
 
+/** Options for deriving a JSON metrics snapshot without changing raw counters. */
+export interface MetricsSnapshotOptions {
+  excludeRoutes?: readonly string[];
+  excludeUpstreamPaths?: readonly string[];
+  now?: () => number;
+}
+
 /** JSON body returned by the proxy's `/v1/usage` route. */
 export interface UsageResponseBody {
   copilot: CopilotUsage | null;

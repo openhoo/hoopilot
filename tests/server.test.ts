@@ -1476,6 +1476,37 @@ describe("metrics and usage endpoints", () => {
     );
   });
 
+  it("serves a dashboard usage view without self-polling traffic or quota errors", async () => {
+    const metrics = new MetricsRegistry();
+    const handler = createHoopilotHandler({
+      ...oauthOptions(async () => new Response("quota unavailable", { status: 503 })),
+      metrics,
+    });
+
+    await (await handler(new Request("http://localhost/dashboard"))).text();
+    const response = await handler(new Request("http://localhost/v1/usage?view=dashboard"));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      copilot: unknown;
+      copilot_error: string;
+      proxy: {
+        inFlight: number;
+        requests: { byRoute: Record<string, number>; total: number };
+        upstream: { errors: number; total: number };
+      };
+    };
+    expect(body.copilot).toBeNull();
+    expect(body.copilot_error).toContain("503");
+    expect(body.proxy.inFlight).toBe(0);
+    expect(body.proxy.requests.total).toBe(0);
+    expect(body.proxy.requests.byRoute).toEqual({});
+    expect(body.proxy.upstream).toEqual({ errors: 0, total: 0 });
+
+    expect(metrics.snapshot().requests.byRoute).toMatchObject({ dashboard: 1, usage: 1 });
+    expect(metrics.snapshot().upstream).toEqual({ errors: 1, total: 1 });
+  });
+
   it("records token usage from legacy completions using the response model", async () => {
     const metrics = new MetricsRegistry();
     const handler = createHoopilotHandler({
@@ -1625,6 +1656,32 @@ describe("metrics and usage endpoints", () => {
       remaining: 0,
       retryAfterSeconds: 120,
     });
+  });
+
+  it("caches failed Copilot quota reads so dashboard polling does not retry every tick", async () => {
+    let now = 2_000;
+    let calls = 0;
+    const client = new CopilotClient({
+      authStorePath: tempAuthPath(),
+      env: {},
+      fetch: async () => {
+        calls += 1;
+        return new Response("temporarily unavailable", { status: 503 });
+      },
+    });
+    const metrics = new MetricsRegistry();
+    const read = createUsageReader(client, metrics, () => now, 60_000);
+
+    expect((await read()).error).toContain("503");
+    now += 10_000;
+    expect((await read()).error).toContain("503");
+    expect(calls).toBe(1);
+    expect(metrics.snapshot().upstream).toEqual({ errors: 1, total: 1 });
+
+    now += 60_000;
+    expect((await read()).error).toContain("503");
+    expect(calls).toBe(2);
+    expect(metrics.snapshot().upstream).toEqual({ errors: 2, total: 2 });
   });
 
   it("reports Copilot quota errors without failing /v1/usage", async () => {

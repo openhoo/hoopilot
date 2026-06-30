@@ -6,6 +6,7 @@ import type {
   GithubRateLimitSnapshot,
   LatencySnapshot,
   MetricsSnapshot,
+  MetricsSnapshotOptions,
   ModelTokenTotals,
   RequestObservation,
   RouteLatency,
@@ -54,6 +55,7 @@ export class MetricsRegistry {
   #inFlight = 0;
   #requests = new Map<string, number>();
   #durations = new Map<string, RouteDuration>();
+  #inFlightByRoute = new Map<string, number>();
   #tokens = new Map<string, ModelTokenTotals>();
   #upstream = new Map<string, number>();
   #copilotQuota?: CopilotUsage;
@@ -65,14 +67,23 @@ export class MetricsRegistry {
   }
 
   /** Mark a request as started; pair with exactly one {@link observe}. */
-  startRequest(): void {
+  startRequest(route?: string): void {
     this.#inFlight += 1;
+    if (route) {
+      this.#inFlightByRoute.set(route, (this.#inFlightByRoute.get(route) ?? 0) + 1);
+    }
   }
 
   /** Record a completed request and clear its in-flight slot. */
   observe(observation: RequestObservation): void {
     if (this.#inFlight > 0) {
       this.#inFlight -= 1;
+    }
+    const inFlightForRoute = this.#inFlightByRoute.get(observation.route) ?? 0;
+    if (inFlightForRoute > 1) {
+      this.#inFlightByRoute.set(observation.route, inFlightForRoute - 1);
+    } else if (inFlightForRoute === 1) {
+      this.#inFlightByRoute.delete(observation.route);
     }
     const key = labelKey(observation.route, observation.method, String(observation.status));
     this.#requests.set(key, (this.#requests.get(key) ?? 0) + 1);
@@ -174,12 +185,19 @@ export class MetricsRegistry {
   }
 
   /** A JSON-friendly view of the current counters. */
-  snapshot(now: () => number = Date.now): MetricsSnapshot {
+  snapshot(nowOrOptions: (() => number) | MetricsSnapshotOptions = Date.now): MetricsSnapshot {
+    const options = typeof nowOrOptions === "function" ? { now: nowOrOptions } : nowOrOptions;
+    const now = options.now ?? Date.now;
+    const excludeRoutes = new Set(options.excludeRoutes ?? []);
+    const excludeUpstreamPaths = new Set(options.excludeUpstreamPaths ?? []);
     const byRoute: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
     let requestsTotal = 0;
     for (const [key, count] of this.#requests) {
       const [route = "", , status = ""] = key.split(LABEL_SEPARATOR);
+      if (excludeRoutes.has(route)) {
+        continue;
+      }
       byRoute[route] = (byRoute[route] ?? 0) + count;
       byStatus[status] = (byStatus[status] ?? 0) + count;
       requestsTotal += count;
@@ -199,8 +217,12 @@ export class MetricsRegistry {
     let upstreamTotal = 0;
     let upstreamErrors = 0;
     for (const [key, count] of this.#upstream) {
+      const [path = "", outcome = ""] = key.split(LABEL_SEPARATOR);
+      if (excludeUpstreamPaths.has(path)) {
+        continue;
+      }
       upstreamTotal += count;
-      if (key.endsWith(`${LABEL_SEPARATOR}error`)) {
+      if (outcome === "error") {
         upstreamErrors += count;
       }
     }
@@ -212,8 +234,8 @@ export class MetricsRegistry {
 
     return {
       githubRateLimit,
-      inFlight: this.#inFlight,
-      latency: this.#latencySnapshot(),
+      inFlight: this.#filteredInFlight(excludeRoutes),
+      latency: this.#latencySnapshot(excludeRoutes),
       requests: { byRoute, byStatus, total: requestsTotal },
       startedAt: new Date(this.#startedAtMs).toISOString(),
       tokens: { byModel, extraction: { ...this.#extraction }, ...tokenTotals },
@@ -222,15 +244,31 @@ export class MetricsRegistry {
     };
   }
 
+  #filteredInFlight(excludeRoutes: ReadonlySet<string>): number {
+    if (excludeRoutes.size === 0) {
+      return this.#inFlight;
+    }
+    let excluded = 0;
+    for (const [route, count] of this.#inFlightByRoute) {
+      if (excludeRoutes.has(route)) {
+        excluded += count;
+      }
+    }
+    return Math.max(0, this.#inFlight - excluded);
+  }
+
   // Summarize the duration histogram into a JSON latency view: per-route count and
   // exact average, plus overall average and estimated p50/p95. The percentiles come
   // from the buckets aggregated across routes, so they share /metrics' resolution.
-  #latencySnapshot(): LatencySnapshot {
+  #latencySnapshot(excludeRoutes: ReadonlySet<string> = new Set()): LatencySnapshot {
     const byRoute: Record<string, RouteLatency> = {};
     const aggregateBuckets = new Array<number>(DURATION_BUCKETS_SECONDS.length).fill(0);
     let totalCount = 0;
     let totalSum = 0;
     for (const [route, entry] of this.#durations) {
+      if (excludeRoutes.has(route)) {
+        continue;
+      }
       byRoute[route] = {
         avgMs: entry.count > 0 ? round2((entry.sum / entry.count) * 1000) : 0,
         count: entry.count,

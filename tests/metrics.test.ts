@@ -121,6 +121,34 @@ describe("MetricsRegistry", () => {
     expect(snapshot.startedAt).toBe(new Date(1_000).toISOString());
   });
 
+  it("can derive a snapshot that excludes observability routes and upstream quota reads", () => {
+    const metrics = new MetricsRegistry({ now: () => 1_000 });
+    metrics.startRequest("usage");
+    metrics.startRequest("responses");
+    metrics.observe({ durationMs: 20, method: "GET", route: "usage", status: 200 });
+    metrics.observe({ durationMs: 120, method: "POST", route: "responses", status: 200 });
+    metrics.observe({ durationMs: 50, method: "GET", route: "metrics", status: 500 });
+    metrics.recordUpstream("/copilot_internal/user", false);
+    metrics.recordUpstream("/responses", true);
+    metrics.startRequest("usage");
+
+    const snapshot = metrics.snapshot({
+      excludeRoutes: ["metrics", "usage"],
+      excludeUpstreamPaths: ["/copilot_internal/user"],
+      now: () => 5_000,
+    });
+
+    expect(snapshot.inFlight).toBe(0);
+    expect(snapshot.requests).toEqual({
+      byRoute: { responses: 1 },
+      byStatus: { "200": 1 },
+      total: 1,
+    });
+    expect(snapshot.latency.count).toBe(1);
+    expect(snapshot.latency.byRoute).toEqual({ responses: { avgMs: 120, count: 1 } });
+    expect(snapshot.upstream).toEqual({ errors: 0, total: 1 });
+  });
+
   it("summarizes request latency from the duration histogram", () => {
     const metrics = new MetricsRegistry({ now: () => 0 });
     metrics.observe({ durationMs: 100, method: "POST", route: "a", status: 200 });

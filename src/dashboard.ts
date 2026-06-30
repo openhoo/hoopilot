@@ -548,10 +548,10 @@ footer.foot .end { margin-left:auto; }
     pollGen += 1; var myGen = pollGen;
     if (inflightFetch){ try { inflightFetch.abort(); } catch (e) {} }
     var ctrl = new AbortController(); inflightFetch = ctrl;
-    var to = setTimeout(function(){ try { ctrl.abort(); } catch (e) {} }, 3000);
+    var to = setTimeout(function(){ try { ctrl.abort(); } catch (e) {} }, Math.max(10000, intervalMs * 2));
     var headers = { "accept":"application/json" };
     if (apiKey) headers["x-api-key"] = apiKey;
-    fetch("/v1/usage", { headers: headers, signal: ctrl.signal, cache:"no-store" }).then(function(res){
+    fetch("/v1/usage?view=dashboard", { headers: headers, signal: ctrl.signal, cache:"no-store" }).then(function(res){
       clearTimeout(to);
       if (myGen !== pollGen) return null;
       if (res.status === 401 || res.status === 403){ inflightFetch = null; showAuth(!!apiKey); return null; }
