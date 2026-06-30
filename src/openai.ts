@@ -15,6 +15,19 @@ interface ResponseStreamOptions {
   responseId?: string;
 }
 
+const COMPACTION_SUMMARIZATION_PROMPT = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
+
+const COMPACTION_SUMMARY_PREFIX =
+  "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:";
+
 interface AccumulatedToolCall {
   arguments: string;
   id: string;
@@ -132,23 +145,134 @@ export function chatCompletionToResponse(completion: JsonObject, responseId?: st
  * input may be a unary JSON body or an SSE stream, so both framings are handled.
  */
 export function responsesCompactionResult(upstreamText: string, isSse: boolean): JsonObject {
-  const output = isSse
-    ? compactionOutputFromResponsesSse(upstreamText)
-    : compactionOutputFromResponse(asRecord(safeJsonParse(upstreamText)));
-  return { output };
+  const summary = compactionSummaryText(upstreamText, isSse);
+  return { output: [compactionSummaryMessageItem(summary)] };
 }
 
-function compactionOutputFromResponse(response: JsonObject): JsonObject[] {
-  if (Array.isArray(response.output) && response.output.length > 0) {
-    return response.output as JsonObject[];
+export function isResponsesCompactionRequest(request: JsonObject): boolean {
+  return responseInputItems(request.input).some(
+    (item) => contentToText(asRecord(item).type) === "compaction_trigger",
+  );
+}
+
+export function responsesCompactionRequestBody(request: JsonObject): string {
+  return JSON.stringify(
+    removeUndefined({
+      ...request,
+      input: [
+        ...compactionInputItemsForCopilot(request.input),
+        {
+          content: [{ text: COMPACTION_SUMMARIZATION_PROMPT, type: "input_text" }],
+          role: "user",
+          type: "message",
+        },
+      ],
+      parallel_tool_calls: false,
+      stream: false,
+      tool_choice: "none",
+      tools: [],
+    }),
+  );
+}
+
+export function normalizeResponsesRequestForCopilotBody(request: JsonObject): string {
+  return JSON.stringify(
+    removeUndefined({
+      ...request,
+      input: normalizeCompactionInputForCopilot(request.input, { dropTrigger: false }),
+    }),
+  );
+}
+
+export function responsesRequestNeedsCopilotNormalization(request: JsonObject): boolean {
+  return responseInputItems(request.input).some((item) => {
+    const type = contentToText(asRecord(item).type);
+    return type === "compaction" || type === "compaction_summary" || type === "context_compaction";
+  });
+}
+
+export function responsesCompactionResponse(
+  upstreamText: string,
+  isSse: boolean,
+  model: string,
+): JsonObject {
+  const output = [compactionOutputItem(compactionSummaryText(upstreamText, isSse))];
+  return removeUndefined({
+    created_at: epochSeconds(),
+    error: null,
+    id: `resp_${randomId()}`,
+    incomplete_details: null,
+    instructions: null,
+    max_output_tokens: null,
+    metadata: {},
+    model,
+    object: "response",
+    output,
+    output_text: "",
+    parallel_tool_calls: false,
+    status: "completed",
+    temperature: null,
+    tool_choice: "none",
+    tools: [],
+    top_p: null,
+  });
+}
+
+export function responsesCompactionSseText(
+  upstreamText: string,
+  isSse: boolean,
+  model: string,
+): string {
+  const responseId = `resp_${randomId()}`;
+  const item = compactionOutputItem(compactionSummaryText(upstreamText, isSse));
+  const createdAt = epochSeconds();
+  let sequenceNumber = 0;
+  const event = (name: string, data: JsonObject | "[DONE]") =>
+    encodeSse(name, data === "[DONE]" ? data : { ...data, sequence_number: sequenceNumber++ });
+
+  return [
+    event("response.created", {
+      response: baseStreamResponse(responseId, model, createdAt, "in_progress", []),
+      type: "response.created",
+    }),
+    event("response.output_item.done", {
+      item,
+      output_index: 0,
+      type: "response.output_item.done",
+    }),
+    event("response.completed", {
+      response: baseStreamResponse(responseId, model, createdAt, "completed", [item]),
+      type: "response.completed",
+    }),
+    event("done", "[DONE]"),
+  ].join("");
+}
+
+function compactionSummaryText(upstreamText: string, isSse: boolean): string {
+  const summary = isSse
+    ? compactionSummaryTextFromResponsesSse(upstreamText)
+    : compactionSummaryTextFromResponse(asRecord(safeJsonParse(upstreamText)));
+  return summary.trim() || "(no summary available)";
+}
+
+function compactionSummaryTextFromResponse(response: JsonObject): string {
+  const output = Array.isArray(response.output)
+    ? response.output.map((item) => asRecord(item))
+    : [];
+  const compaction = output.find((item) => contentToText(item.type) === "compaction");
+  if (compaction) {
+    return contentToText(compaction.encrypted_content);
   }
-  const text = contentToText(response.output_text);
-  return text ? [messageOutputItem(text)] : [];
+  const text = outputText(output);
+  if (text) {
+    return text;
+  }
+  return contentToText(response.output_text);
 }
 
-function compactionOutputFromResponsesSse(text: string): JsonObject[] {
+function compactionSummaryTextFromResponsesSse(text: string): string {
   let deltas = "";
-  let completedOutput: JsonObject[] | undefined;
+  let completedResponse: JsonObject | undefined;
   for (const block of text.split(/\r?\n\r?\n/)) {
     const data = block
       .split(/\r?\n/)
@@ -163,16 +287,16 @@ function compactionOutputFromResponsesSse(text: string): JsonObject[] {
     if (type === "response.output_text.delta") {
       deltas += contentToText(record.delta);
     } else if (type === "response.completed" || type === "response.incomplete") {
-      const response = asRecord(record.response);
-      if (Array.isArray(response.output)) {
-        completedOutput = response.output as JsonObject[];
-      }
+      completedResponse = asRecord(record.response);
     }
   }
-  if (completedOutput && completedOutput.length > 0) {
-    return completedOutput;
+  if (completedResponse) {
+    const summary = compactionSummaryTextFromResponse(completedResponse);
+    if (summary) {
+      return summary;
+    }
   }
-  return deltas ? [messageOutputItem(deltas)] : [];
+  return deltas;
 }
 
 export function chatCompletionToCompletion(completion: JsonObject): JsonObject {
@@ -747,6 +871,76 @@ function messageOutputItem(text: string, id = `msg_${randomId()}`): JsonObject {
     status: "completed",
     type: "message",
   };
+}
+
+function compactionSummaryMessageItem(text: string, id = `msg_${randomId()}`): JsonObject {
+  return {
+    content: [
+      {
+        text: `${COMPACTION_SUMMARY_PREFIX}\n${text}`,
+        type: "input_text",
+      },
+    ],
+    id,
+    role: "user",
+    type: "message",
+  };
+}
+
+function compactionOutputItem(text: string, id = `cmpct_${randomId()}`): JsonObject {
+  return {
+    encrypted_content: text,
+    id,
+    type: "compaction",
+  };
+}
+
+function normalizeCompactionInputForCopilot(
+  input: unknown,
+  options: { dropTrigger: boolean },
+): unknown {
+  const items = responseInputItems(input);
+  if (items.length === 0) {
+    return input;
+  }
+
+  const normalized: unknown[] = [];
+  for (const item of items) {
+    const record = asRecord(item);
+    const type = contentToText(record.type);
+    if (type === "compaction_trigger" && options.dropTrigger) {
+      continue;
+    }
+    if (type === "compaction" || type === "compaction_summary" || type === "context_compaction") {
+      const text = contentToText(record.encrypted_content);
+      if (text) {
+        normalized.push(compactionSummaryMessageItem(text));
+      }
+      continue;
+    }
+    normalized.push(item);
+  }
+  return normalized;
+}
+
+function compactionInputItemsForCopilot(input: unknown): unknown[] {
+  if (Array.isArray(input)) {
+    return normalizeCompactionInputForCopilot(input, { dropTrigger: true }) as unknown[];
+  }
+  const text = contentToText(input);
+  return text
+    ? [
+        {
+          content: [{ text, type: "input_text" }],
+          role: "user",
+          type: "message",
+        },
+      ]
+    : [];
+}
+
+function responseInputItems(input: unknown): unknown[] {
+  return Array.isArray(input) ? input : [];
 }
 
 function functionCallItem(

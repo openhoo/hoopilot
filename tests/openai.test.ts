@@ -5,10 +5,15 @@ import {
   completionStreamFromChatStream,
   completionsRequestToChatCompletion,
   fallbackModels,
+  isResponsesCompactionRequest,
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  normalizeResponsesRequestForCopilotBody,
+  responsesCompactionRequestBody,
+  responsesCompactionResponse,
   responsesCompactionResult,
+  responsesCompactionSseText,
   responsesRequestToChatCompletion,
   responsesStreamFromChatStream,
 } from "../src/openai";
@@ -241,7 +246,7 @@ describe("chatCompletionToResponse", () => {
 });
 
 describe("responsesCompactionResult", () => {
-  it("passes a unary Responses output array through verbatim", () => {
+  it("wraps unary Responses text as a compacted history summary message", () => {
     const output = [
       { content: [{ text: "reasoning", type: "summary_text" }], type: "reasoning" },
       {
@@ -251,24 +256,35 @@ describe("responsesCompactionResult", () => {
       },
     ];
     const result = responsesCompactionResult(JSON.stringify({ object: "response", output }), false);
-    expect(result).toEqual({ output });
+    expect(result.output).toEqual([
+      expect.objectContaining({
+        content: [
+          expect.objectContaining({
+            text: expect.stringContaining("summary"),
+            type: "input_text",
+          }),
+        ],
+        role: "user",
+        type: "message",
+      }),
+    ]);
   });
 
-  it("synthesizes an assistant message from output_text when output is absent", () => {
+  it("uses output_text when output is absent", () => {
     const result = responsesCompactionResult(
       JSON.stringify({ object: "response", output: [], output_text: "condensed" }),
       false,
     );
     expect(result.output).toEqual([
       expect.objectContaining({
-        content: [expect.objectContaining({ text: "condensed", type: "output_text" })],
-        role: "assistant",
+        content: [expect.objectContaining({ text: expect.stringContaining("condensed") })],
+        role: "user",
         type: "message",
       }),
     ]);
   });
 
-  it("extracts the completed response output from an SSE stream", () => {
+  it("extracts completed response output from an SSE stream", () => {
     const output = [
       {
         content: [{ annotations: [], text: "streamed summary", type: "output_text" }],
@@ -282,7 +298,14 @@ describe("responsesCompactionResult", () => {
       `event: response.completed\ndata: ${JSON.stringify({ response: { output }, type: "response.completed" })}\n\n`,
       "event: done\ndata: [DONE]\n\n",
     ].join("");
-    expect(responsesCompactionResult(sse, true)).toEqual({ output });
+    const result = responsesCompactionResult(sse, true);
+    expect(result.output).toEqual([
+      expect.objectContaining({
+        content: [expect.objectContaining({ text: expect.stringContaining("streamed summary") })],
+        role: "user",
+        type: "message",
+      }),
+    ]);
   });
 
   it("falls back to streamed text deltas when no completed event carries output", () => {
@@ -293,15 +316,92 @@ describe("responsesCompactionResult", () => {
     const result = responsesCompactionResult(sse, true);
     expect(result.output).toEqual([
       expect.objectContaining({
-        content: [expect.objectContaining({ text: "only deltas", type: "output_text" })],
-        role: "assistant",
+        content: [expect.objectContaining({ text: expect.stringContaining("only deltas") })],
+        role: "user",
         type: "message",
       }),
     ]);
   });
 
-  it("returns an empty output array when the upstream body is unusable", () => {
-    expect(responsesCompactionResult("not json", false)).toEqual({ output: [] });
+  it("returns a fallback summary when the upstream body is unusable", () => {
+    const result = responsesCompactionResult("not json", false);
+    expect(result.output).toEqual([
+      expect.objectContaining({
+        content: [
+          expect.objectContaining({ text: expect.stringContaining("no summary available") }),
+        ],
+        role: "user",
+        type: "message",
+      }),
+    ]);
+  });
+
+  it("builds an explicit Copilot summary request for compaction inputs", () => {
+    const body = JSON.parse(
+      responsesCompactionRequestBody({
+        input: [
+          { content: [{ text: "old", type: "input_text" }], role: "user", type: "message" },
+          { type: "compaction_trigger" },
+        ],
+        model: "gpt-5.5",
+        stream: true,
+        tools: [{ name: "shell", type: "function" }],
+      }),
+    );
+
+    expect(body.stream).toBe(false);
+    expect(body.tools).toEqual([]);
+    expect(body.input).toHaveLength(2);
+    expect(body.input.at(-1)).toMatchObject({
+      content: [expect.objectContaining({ text: expect.stringContaining("CONTEXT CHECKPOINT") })],
+      role: "user",
+      type: "message",
+    });
+    expect(body.input.some((item: { type?: string }) => item.type === "compaction_trigger")).toBe(
+      false,
+    );
+  });
+
+  it("detects and normalizes compaction items in normal Responses requests", () => {
+    const request = {
+      input: [
+        { encrypted_content: "prior summary", type: "compaction" },
+        { type: "compaction_trigger" },
+      ],
+      model: "gpt-5.5",
+    };
+
+    expect(isResponsesCompactionRequest(request)).toBe(true);
+    const body = JSON.parse(normalizeResponsesRequestForCopilotBody(request));
+    expect(body.input[0]).toMatchObject({
+      content: [expect.objectContaining({ text: expect.stringContaining("prior summary") })],
+      role: "user",
+      type: "message",
+    });
+  });
+
+  it("emits exactly one v2 compaction output item", () => {
+    const response = responsesCompactionResponse(
+      JSON.stringify({ object: "response", output_text: "new compact summary" }),
+      false,
+      "gpt-5.5",
+    );
+
+    expect(response.output).toEqual([
+      expect.objectContaining({
+        encrypted_content: "new compact summary",
+        type: "compaction",
+      }),
+    ]);
+
+    const sse = responsesCompactionSseText(
+      JSON.stringify({ object: "response", output_text: "new compact summary" }),
+      false,
+      "gpt-5.5",
+    );
+    expect(sse).toContain("event: response.output_item.done");
+    expect(sse).toContain('"type":"compaction"');
+    expect(sse).toContain('"encrypted_content":"new compact summary"');
   });
 });
 

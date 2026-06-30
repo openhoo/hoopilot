@@ -25,11 +25,17 @@ import {
   completionsRequestToChatCompletion,
   extractTokenUsage,
   fallbackModels,
+  isResponsesCompactionRequest,
   normalizeChatCompletionRequest,
   normalizeModelsResponse,
   normalizeRequestedModel,
+  normalizeResponsesRequestForCopilotBody,
   OpenAICompatibilityError,
+  responsesCompactionRequestBody,
+  responsesCompactionResponse,
   responsesCompactionResult,
+  responsesCompactionSseText,
+  responsesRequestNeedsCopilotNormalization,
 } from "./openai";
 import type {
   CopilotUsage,
@@ -666,7 +672,24 @@ async function handleResponses(
   bufferProxyBodies: boolean,
 ): Promise<Response> {
   const { json, text: body } = await readJsonText(request);
-  const upstream = await client.responses(body, request.signal);
+  if (isResponsesCompactionRequest(json)) {
+    return handleResponsesCompactionV2(
+      client,
+      metrics,
+      recordTokens,
+      recordExtraction,
+      json,
+      request,
+      logger,
+    );
+  }
+
+  const upstream = await client.responses(
+    responsesRequestNeedsCopilotNormalization(json)
+      ? normalizeResponsesRequestForCopilotBody(json)
+      : body,
+    request.signal,
+  );
   metrics.recordUpstream("/responses", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
@@ -703,10 +726,7 @@ async function handleResponsesCompact(
   logger: HoopilotLogger,
 ): Promise<Response> {
   const body = await readJson(request);
-  const upstream = await client.responses(
-    JSON.stringify({ ...body, stream: false }),
-    request.signal,
-  );
+  const upstream = await client.responses(responsesCompactionRequestBody(body), request.signal);
   metrics.recordUpstream("/responses", upstream.ok);
   if (!upstream.ok) {
     return proxyError(upstream, logger);
@@ -722,6 +742,31 @@ async function handleResponsesCompact(
     recordExtraction,
   );
   return jsonResponse(responsesCompactionResult(text, isSse));
+}
+
+async function handleResponsesCompactionV2(
+  client: CopilotClient,
+  metrics: MetricsRegistry,
+  recordTokens: TokenRecorder,
+  recordExtraction: ExtractionRecorder,
+  json: JsonObject,
+  request: Request,
+  logger: HoopilotLogger,
+): Promise<Response> {
+  const upstream = await client.responses(responsesCompactionRequestBody(json), request.signal);
+  metrics.recordUpstream("/responses", upstream.ok);
+  if (!upstream.ok) {
+    return proxyError(upstream, logger);
+  }
+  logUpstreamSuccess(logger, "/responses", upstream.status);
+  const isSse = isStreamingResponse(upstream);
+  const text = await upstream.text();
+  const model = normalizeRequestedModel(json.model);
+  recordResponseTextUsage(text, isSse, model, recordTokens, recordExtraction);
+  if (json.stream === true) {
+    return textResponse(responsesCompactionSseText(text, isSse, model), "text/event-stream");
+  }
+  return jsonResponse(responsesCompactionResponse(text, isSse, model));
 }
 
 async function responseWithObservedUsage(
@@ -844,6 +889,16 @@ function jsonResponse(body: object, status = 200): Response {
     headers: {
       ...corsHeaders(),
       "content-type": "application/json; charset=utf-8",
+    },
+    status,
+  });
+}
+
+function textResponse(body: string, contentType: string, status = 200): Response {
+  return new Response(body, {
+    headers: {
+      ...corsHeaders(),
+      "content-type": `${contentType}; charset=utf-8`,
     },
     status,
   });

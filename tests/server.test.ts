@@ -376,17 +376,20 @@ describe("createHoopilotHandler", () => {
 
   it("serves Codex remote compaction through a unary Responses call", async () => {
     const upstreamRequests: Request[] = [];
-    const compactedOutput = [
-      {
-        content: [{ annotations: [], text: "compacted", type: "output_text" }],
-        role: "assistant",
-        type: "message",
-      },
-    ];
     const handler = createHoopilotHandler(
       oauthOptions(async (input, init) => {
         upstreamRequests.push(new Request(input, init));
-        return Response.json({ object: "response", output: compactedOutput, status: "completed" });
+        return Response.json({
+          object: "response",
+          output: [
+            {
+              content: [{ annotations: [], text: "compacted", type: "output_text" }],
+              role: "assistant",
+              type: "message",
+            },
+          ],
+          status: "completed",
+        });
       }),
     );
 
@@ -408,9 +411,63 @@ describe("createHoopilotHandler", () => {
       const last = upstreamRequests.at(-1)!;
       expect(last.url).toBe("https://api.githubcopilot.com/responses");
       // Compaction is a unary request even though Codex normally streams.
-      await expect(last.json()).resolves.toMatchObject({ model: "gpt-5.5", stream: false });
-      await expect(response.json()).resolves.toEqual({ output: compactedOutput });
+      const upstreamBody = await last.json();
+      expect(upstreamBody).toMatchObject({ model: "gpt-5.5", stream: false, tools: [] });
+      expect(upstreamBody.input.at(-1)).toMatchObject({
+        content: [expect.objectContaining({ text: expect.stringContaining("CONTEXT CHECKPOINT") })],
+        role: "user",
+        type: "message",
+      });
+      await expect(response.json()).resolves.toMatchObject({
+        output: [
+          expect.objectContaining({
+            content: [expect.objectContaining({ text: expect.stringContaining("compacted") })],
+            role: "user",
+            type: "message",
+          }),
+        ],
+      });
     }
+  });
+
+  it("serves Codex remote compaction v2 through a single compaction stream item", async () => {
+    const upstreamRequests: Request[] = [];
+    const handler = createHoopilotHandler(
+      oauthOptions(async (input, init) => {
+        upstreamRequests.push(new Request(input, init));
+        return Response.json({
+          object: "response",
+          output_text: "small checkpoint",
+          status: "completed",
+        });
+      }),
+    );
+
+    const response = await handler(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({
+          input: [
+            { content: [{ text: "hi", type: "input_text" }], role: "user", type: "message" },
+            { type: "compaction_trigger" },
+          ],
+          model: "gpt-5.5",
+          stream: true,
+        }),
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const upstreamBody = await upstreamRequests[0]!.json();
+    expect(upstreamBody.stream).toBe(false);
+    expect(
+      upstreamBody.input.some((item: { type?: string }) => item.type === "compaction_trigger"),
+    ).toBe(false);
+    const text = await response.text();
+    expect(text).toContain("event: response.output_item.done");
+    expect(text).toContain('"type":"compaction"');
+    expect(text).toContain('"encrypted_content":"small checkpoint"');
   });
 
   it("maps Responses compaction upstream errors instead of returning 404", async () => {
