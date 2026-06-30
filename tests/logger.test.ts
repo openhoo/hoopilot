@@ -33,6 +33,8 @@ describe("createHoopilotLogger", () => {
 
     await Bun.sleep(0);
     const log = JSON.parse(stream.output()) as Record<string, unknown>;
+    expect(log.level).toBe(30);
+    expect(log.time).toEqual(expect.any(String));
     expect(log.service).toBe("hoopilot");
     expect(log.component).toBe("test");
     expect(log.msg).toBe("credential check");
@@ -60,6 +62,77 @@ describe("createHoopilotLogger", () => {
     await Bun.sleep(10);
     expect(stream.output()).toContain("default pretty check");
     expect(() => JSON.parse(stream.output())).toThrow();
+  });
+
+  it("formats common pretty fields inline without a raw trailing object", async () => {
+    const stream = new CapturingStream();
+    const logger = createHoopilotLogger({
+      colorize: false,
+      env: {},
+      stream,
+    }).child({
+      command: "serve",
+      component: "server",
+      method: "POST",
+      path: "/v1/chat/completions",
+      requestId: "req-test",
+      route: "chat_completions",
+    });
+
+    logger.info(
+      {
+        durationMs: 42.37,
+        event: "http.request.completed",
+        status: 200,
+        stream: true,
+      },
+      "request completed",
+    );
+
+    await Bun.sleep(10);
+    const output = stream.output();
+    expect(output).toMatch(/^INFO \[\d{2}:\d{2}:\d{2}\]: request completed /);
+    expect(output).toContain("component=server");
+    expect(output).toContain("command=serve");
+    expect(output).toContain("event=http.request.completed");
+    expect(output).toContain("method=POST");
+    expect(output).toContain("path=/v1/chat/completions");
+    expect(output).toContain("status=200");
+    expect(output).toContain("duration=42.37ms");
+    expect(output).toContain("stream=true");
+    expect(output).toContain("route=chat_completions");
+    expect(output).toContain("requestId=req-test");
+    expect(output).not.toContain('{"');
+  });
+
+  it("keeps unknown and error fields visible in pretty output", async () => {
+    const stream = new CapturingStream();
+    const logger = createHoopilotLogger({
+      colorize: false,
+      env: {},
+      stream,
+    });
+
+    logger.warn(
+      {
+        attempt: 2,
+        err: {
+          message: "upstream exploded",
+          name: "Error",
+        },
+        event: "copilot.request.failed",
+        upstreamStatus: 503,
+      },
+      "copilot upstream request failed",
+    );
+
+    await Bun.sleep(10);
+    const output = stream.output();
+    expect(output).toContain("copilot upstream request failed");
+    expect(output).toContain("event=copilot.request.failed");
+    expect(output).toContain("upstreamStatus=503");
+    expect(output).toContain('"attempt":2');
+    expect(output).toContain("upstream exploded");
   });
 
   it("can create a silent default logger without an injected stream", () => {

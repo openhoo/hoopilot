@@ -379,6 +379,12 @@ Console logs default to pretty output at `info` level:
 hoopilot --log-level info --log-format pretty
 ```
 
+Pretty logs keep common request and diagnostic fields inline for terminal use:
+
+```text
+INFO [16:40:14]: request completed component=server event=http.request.completed method=POST path=/v1/chat/completions status=200 duration=42.37ms stream=true requestId=req-test
+```
+
 For newline-delimited JSON:
 
 ```sh

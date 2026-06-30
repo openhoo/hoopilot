@@ -14,6 +14,32 @@ export const DEFAULT_LOG_LEVEL: LogLevel = "info";
 
 const LOG_FORMATS = ["json", "pretty"] as const;
 const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"] as const;
+const PRETTY_INLINE_FIELDS = [
+  "component",
+  "command",
+  "event",
+  "method",
+  "path",
+  "status",
+  "durationMs",
+  "stream",
+  "route",
+  "requestId",
+  "upstreamPath",
+  "upstreamStatus",
+  "url",
+  "baseUrl",
+  "origin",
+  "currentVersion",
+  "installKind",
+  "latestVersion",
+  "assetName",
+  "count",
+  "plan",
+  "apiBaseUrl",
+  "authStorePath",
+] as const;
+const PRETTY_IGNORED_FIELDS = ["pid", "hostname", "service", ...PRETTY_INLINE_FIELDS] as const;
 const REDACT_PATHS = [
   "apiKey",
   "authorization",
@@ -74,9 +100,11 @@ export function createHoopilotLogger(options: HoopilotLoggerOptions = {}): Hoopi
           // stream's TTY-ness is unknown, so default to no color there.
           colorize: options.colorize ?? (options.stream ? false : process.stdout.isTTY),
           destination: options.stream ?? 1,
-          ignore: "pid,hostname",
+          ignore: PRETTY_IGNORED_FIELDS.join(","),
+          levelFirst: true,
+          messageFormat: formatPrettyMessage,
           singleLine: true,
-          translateTime: "SYS:standard",
+          translateTime: "SYS:HH:MM:ss",
         }),
       ),
     );
@@ -140,6 +168,54 @@ export function errorDetails(error: unknown): LogFields {
     };
   }
   return { message: String(error) };
+}
+
+function formatPrettyMessage(log: Record<string, unknown>, messageKey: string): string {
+  const message = formatPrettyLogMessage(log[messageKey]);
+  const fields = PRETTY_INLINE_FIELDS.flatMap((field) => {
+    const value = log[field];
+    if (value === undefined) {
+      return [];
+    }
+    return `${prettyFieldLabel(field)}=${formatPrettyFieldValue(field, value)}`;
+  });
+  return fields.length > 0 ? `${message} ${fields.join(" ")}` : message;
+}
+
+function formatPrettyLogMessage(value: unknown): string {
+  return typeof value === "string" ? value : formatPrettyValue(value);
+}
+
+function prettyFieldLabel(field: (typeof PRETTY_INLINE_FIELDS)[number]): string {
+  return field === "durationMs" ? "duration" : field;
+}
+
+function formatPrettyFieldValue(
+  field: (typeof PRETTY_INLINE_FIELDS)[number],
+  value: unknown,
+): string {
+  const formatted = formatPrettyValue(value);
+  return field === "durationMs" && typeof value === "number" ? `${formatted}ms` : formatted;
+}
+
+function formatPrettyValue(value: unknown): string {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : JSON.stringify(value);
+  }
+  if (typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return isBarePrettyValue(value) ? value : JSON.stringify(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  return JSON.stringify(value) ?? String(value);
+}
+
+function isBarePrettyValue(value: string): boolean {
+  return /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(value);
 }
 
 function isLogFormat(value: string): value is LogFormat {
