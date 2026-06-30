@@ -1,5 +1,16 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.7 (2026-06-30)
+
+### Other Changes
+
+- document docker compose hosting (7686601)
+
+### Bug Fixes
+
+- address architecture review findings (321bfc1)
+- repair docker ci smoke auth fixture (c0e880e)
+
 ## 2.1.6 (2026-06-30)
 
 ### Bug Fixes
