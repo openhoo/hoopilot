@@ -150,14 +150,69 @@ npx --package @openhoo/hoopilot codexx --yolo
 
 Every line is a single command that pastes as-is into PowerShell, `cmd`, bash, or zsh. Step 3 needs the `codex` CLI on your `PATH`; `codexx` defaults to `gpt-5.5` and sends a throwaway key that the keyless proxy accepts (Bun users can swap `npx --package @openhoo/hoopilot` for `bunx`).
 
-Or, from a clone of this repo, use the bundled `docker-compose.yml` — it is keyless on loopback by default:
+Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:1.3`, `:1.3.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
+
+#### Docker Compose hosting
+
+From a clone of this repo, the bundled `docker-compose.yml` builds the local image, stores the Copilot OAuth credential in the `hoopilot-data` Docker volume, and publishes only `127.0.0.1:4141` by default:
 
 ```sh
-docker compose run --rm hoopilot login   # one-time
-docker compose up -d                      # keyless on loopback
+git clone https://github.com/openhoo/hoopilot.git
+cd hoopilot
+cp .env.example .env
+
+# Sign in once. Follow the GitHub device-code URL printed by the container.
+docker compose run --rm hoopilot login
+
+# Start the service in the background.
+docker compose up -d --build
+
+# Check it.
+docker compose ps
+curl http://127.0.0.1:4141/healthz
 ```
 
-Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:1.3`, `:1.3.0`, and `:latest`. The image listens on `0.0.0.0:4141` (required so Docker port publishing can reach it), runs as a non-root user, and stores its OAuth credential at `/data/auth.json` by default. Override that path with `HOOPILOT_AUTH_FILE`.
+The one-time `docker compose run --rm hoopilot login` command writes `/data/auth.json` inside the same named volume used by the long-running service, so restarts and container recreates keep the login. Re-run the login command only if the Copilot credential expires, you switch GitHub accounts, or a model that should be available still does not appear after updating.
+
+For the default loopback-only compose setup, `.env.example` leaves `HOOPILOT_API_KEY` empty and sets `HOOPILOT_ALLOW_UNAUTHENTICATED=1`, so local clients can use any placeholder key:
+
+```sh
+export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
+export OPENAI_API_KEY=hoopilot
+npx --package @openhoo/hoopilot codexx
+```
+
+If you publish the port on a non-loopback interface or put Hoopilot behind a reverse proxy, set a strong API key in `.env` and send the same value from clients:
+
+```sh
+HOOPILOT_API_KEY=$(openssl rand -hex 24)
+printf 'HOOPILOT_API_KEY=%s\nHOOPILOT_ALLOW_UNAUTHENTICATED=0\n' "$HOOPILOT_API_KEY" > .env
+docker compose up -d --build
+
+export OPENAI_BASE_URL=http://127.0.0.1:4141/v1
+export OPENAI_API_KEY=$HOOPILOT_API_KEY
+```
+
+To run from the published GHCR image instead of building from a checkout, create a compose file like this and use the same login and start commands:
+
+```yaml
+services:
+  hoopilot:
+    image: ghcr.io/openhoo/hoopilot:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4141:4141"
+    environment:
+      HOOPILOT_ALLOW_UNAUTHENTICATED: "1"
+      HOOPILOT_API_KEY: ${HOOPILOT_API_KEY:-}
+    volumes:
+      - hoopilot-data:/data
+
+volumes:
+  hoopilot-data:
+```
+
+Use `docker compose logs -f hoopilot` when you need to watch startup, login, or upstream Copilot errors.
 
 #### Exposing the proxy beyond loopback
 
@@ -179,6 +234,26 @@ hoopilot update
 ```
 
 npm installs report when a newer version is available and print the right command. Hoopilot checks GitHub at most once a day in the background. Disable the check with `--no-update-check`, `HOOPILOT_NO_UPDATE_CHECK`, or `NO_UPDATE_NOTIFIER`.
+
+Docker Compose deployments update by replacing the container image, not by running `hoopilot update` inside the container.
+
+For the bundled repo compose file, pull the latest source and rebuild:
+
+```sh
+git pull --ff-only
+docker compose up -d --build
+docker compose ps
+```
+
+For a compose file that uses `image: ghcr.io/openhoo/hoopilot:latest`, pull the new image and recreate the service:
+
+```sh
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+The `hoopilot-data` volume is preserved in both cases, so the Copilot login normally survives updates.
 
 ## Running the proxy
 
