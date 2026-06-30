@@ -1248,6 +1248,18 @@ describe("createHoopilotHandler", () => {
     ).toThrow("well-known demo");
   });
 
+  it("refuses a non-loopback start that uses a short API key", () => {
+    expect(() =>
+      startHoopilotServer({
+        apiKey: "short-key",
+        env: {},
+        fetch: unusedFetch,
+        host: "0.0.0.0",
+        port: 0,
+      }),
+    ).toThrow("at least 24 characters");
+  });
+
   it("starts on a non-loopback host with a strong API key", () => {
     const started = startHoopilotServer({
       apiKey: "s3cret-strong-and-unique-key",

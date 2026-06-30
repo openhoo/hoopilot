@@ -67,10 +67,21 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4141;
 const FORBIDDEN_BROWSER_ORIGIN_MESSAGE =
   "Cross-origin browser requests are blocked unless the Origin is loopback or listed in HOOPILOT_ALLOWED_ORIGINS.";
+const MIN_NON_LOOPBACK_API_KEY_LENGTH = 24;
 // API keys we ship in docs/examples as placeholders. They are effectively public,
 // so refusing them on non-loopback binds keeps a credential-backed proxy from being
 // reachable on a network with a guessable key.
-const WELL_KNOWN_DEMO_API_KEYS = new Set(["local-key"]);
+const WELL_KNOWN_DEMO_API_KEYS = new Set([
+  "changeme",
+  "demo",
+  "example",
+  "hoopilot",
+  "local-key",
+  "password",
+  "password123",
+  "secret",
+  "test",
+]);
 const INVALID_JSON_MESSAGE = "Request body must be valid JSON.";
 const JSON_OBJECT_MESSAGE = "Request body must be a JSON object.";
 const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
@@ -481,10 +492,9 @@ export function startHoopilotServer(options: HoopilotServerOptions = {}): Starte
         "Refusing to listen on a non-loopback host without HOOPILOT_API_KEY. Set an API key or pass --allow-unauthenticated.",
       );
     }
-    if (apiKey && isWellKnownDemoApiKey(apiKey)) {
-      throw new Error(
-        "Refusing to listen on a non-loopback host with a well-known demo HOOPILOT_API_KEY. Set a strong, unique API key.",
-      );
+    const rejection = apiKey ? apiKeyRejectionReason(apiKey) : undefined;
+    if (rejection) {
+      throw new Error(`Refusing to listen on a non-loopback host: ${rejection}`);
     }
   }
 
@@ -877,19 +887,23 @@ async function readRequestText(request: Request): Promise<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let bytes = 0;
-  let text = "";
+  const chunks: string[] = [];
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        return `${text}${decoder.decode()}`;
+        const tail = decoder.decode();
+        if (tail) {
+          chunks.push(tail);
+        }
+        return chunks.join("");
       }
       bytes += value.byteLength;
       if (bytes > MAX_REQUEST_BODY_BYTES) {
         await reader.cancel().catch(() => {});
         throw new RequestBodyTooLargeError();
       }
-      text += decoder.decode(value, { stream: true });
+      chunks.push(decoder.decode(value, { stream: true }));
     }
   } finally {
     reader.releaseLock();
@@ -1032,8 +1046,18 @@ function resolveCorsAllowOrigin(
   return isAllowedOrigin(origin, allowedOrigins) ? origin : undefined;
 }
 
-function isWellKnownDemoApiKey(apiKey: string): boolean {
-  return WELL_KNOWN_DEMO_API_KEYS.has(apiKey.trim().toLowerCase());
+function apiKeyRejectionReason(apiKey: string): string | undefined {
+  const normalized = apiKey.trim();
+  if (WELL_KNOWN_DEMO_API_KEYS.has(normalized.toLowerCase())) {
+    return "HOOPILOT_API_KEY is a well-known demo value. Set a strong, unique API key.";
+  }
+  if (normalized.length < MIN_NON_LOOPBACK_API_KEY_LENGTH) {
+    return `HOOPILOT_API_KEY must be at least ${MIN_NON_LOOPBACK_API_KEY_LENGTH} characters when listening on a non-loopback host.`;
+  }
+  if (/^(.)\1+$/.test(normalized)) {
+    return "HOOPILOT_API_KEY must not be a repeated single character. Set a strong, unique API key.";
+  }
+  return undefined;
 }
 
 function isUpstreamAuthStatus(status: number): boolean {

@@ -105,6 +105,11 @@ describe("assetSuffixFor / assetNameFor", () => {
     expect(assetSuffixFor("win32", "arm64", false)).toBe("windows-arm64");
   });
 
+  it("rejects unsupported standalone update targets", () => {
+    expect(() => assetSuffixFor("freebsd", "x64", false)).toThrow("Unsupported platform");
+    expect(() => assetSuffixFor("linux", "riscv64", false)).toThrow("Unsupported architecture");
+  });
+
   it("adds .exe only for Windows asset names", () => {
     expect(assetNameFor("linux-x64")).toBe("hoopilot-linux-x64");
     expect(assetNameFor("darwin-arm64")).toBe("hoopilot-darwin-arm64");

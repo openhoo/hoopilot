@@ -40,7 +40,8 @@ LABEL org.opencontainers.image.source="https://github.com/openhoo/hoopilot" \
 # Service defaults. HOST=0.0.0.0 is required so Docker port publishing can reach
 # the proxy. Because the container cannot tell whether the published port is
 # loopback-only, the image fails closed: hoopilot refuses to start on this
-# non-loopback host unless HOOPILOT_API_KEY is set to a strong, unique secret.
+# non-loopback host unless HOOPILOT_API_KEY is set to a strong, unique secret
+# of at least 24 characters.
 # To intentionally run without authentication (e.g. behind your own auth proxy),
 # set HOOPILOT_ALLOW_UNAUTHENTICATED=1.
 ENV NODE_ENV=production \

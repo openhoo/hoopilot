@@ -66,7 +66,7 @@ $env:OPENAI_BASE_URL = "http://127.0.0.1:4141/v1"
 $env:OPENAI_API_KEY = "hoopilot"
 ```
 
-To require clients to authenticate — recommended whenever you expose the proxy beyond localhost — set `HOOPILOT_API_KEY` to a strong, unique secret and send that value as the client key:
+To require clients to authenticate — recommended whenever you expose the proxy beyond localhost — set `HOOPILOT_API_KEY` to a strong, unique secret of at least 24 characters and send that value as the client key:
 
 ```sh
 export HOOPILOT_API_KEY=$(openssl rand -hex 24)
@@ -161,7 +161,7 @@ Tags follow the release version, for example `ghcr.io/openhoo/hoopilot:1.3`, `:1
 
 #### Exposing the proxy beyond loopback
 
-The image binds `0.0.0.0` and cannot tell whether the published port is loopback-only, so it fails closed: drop the `-e HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in (or map the port to a non-loopback interface) and it refuses to start without a strong, unique `HOOPILOT_API_KEY` (well-known demo keys are rejected). Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`:
+The image binds `0.0.0.0` and cannot tell whether the published port is loopback-only, so it fails closed: drop the `-e HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in (or map the port to a non-loopback interface) and it refuses to start without a strong, unique `HOOPILOT_API_KEY` of at least 24 characters. Short, repeated, and well-known demo keys are rejected. Clients then send that key as `Authorization: Bearer <key>` or `x-api-key: <key>`:
 
 ```sh
 export HOOPILOT_API_KEY=$(openssl rand -hex 24)
@@ -201,7 +201,7 @@ Start the server:
 hoopilot --port 4141
 ```
 
-By default Hoopilot listens on `127.0.0.1:4141`. If `HOOPILOT_API_KEY` is unset, local requests are accepted without client authentication. Binding to a non-loopback host requires either a strong, unique `HOOPILOT_API_KEY` or the explicit `--allow-unauthenticated` / `HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in. Well-known demo keys are always rejected on a non-loopback host, even with the unauthenticated opt-in.
+By default Hoopilot listens on `127.0.0.1:4141`. If `HOOPILOT_API_KEY` is unset, local requests are accepted without client authentication. Binding to a non-loopback host requires either a strong, unique `HOOPILOT_API_KEY` of at least 24 characters or the explicit `--allow-unauthenticated` / `HOOPILOT_ALLOW_UNAUTHENTICATED=1` opt-in. Short, repeated, and well-known demo keys are always rejected on a non-loopback host, even with the unauthenticated opt-in.
 
 When an API key is configured, clients may send it as either `Authorization: Bearer <key>` or `x-api-key: <key>`.
 
@@ -366,7 +366,7 @@ Server and local-client settings:
 | --- | --- |
 | `HOST` / `--host` | Host to listen on. Default: `127.0.0.1` for local runs; Docker sets `0.0.0.0`. |
 | `PORT` / `--port` | Port to listen on. Default: `4141`. |
-| `HOOPILOT_API_KEY` / `--api-key` | Require clients to send `Authorization: Bearer <key>` or `x-api-key: <key>`. Must be a strong, unique secret on non-loopback binds; well-known demo keys are rejected. |
+| `HOOPILOT_API_KEY` / `--api-key` | Require clients to send `Authorization: Bearer <key>` or `x-api-key: <key>`. Must be a strong, unique secret of at least 24 characters on non-loopback binds; short, repeated, and well-known demo keys are rejected. |
 | `--api-key-file` | Read the local API key from a file instead of argv. |
 | `HOOPILOT_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to make cross-origin requests. Loopback origins are always allowed; every other origin is blocked. |
 | `HOOPILOT_ALLOW_UNAUTHENTICATED` / `--allow-unauthenticated` | Allow non-loopback binds without a local API key. |

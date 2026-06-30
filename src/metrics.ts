@@ -504,11 +504,11 @@ export class MetricsRegistry {
 }
 
 /**
- * Tee `response`'s body so the client receives an unchanged copy while a
- * background reader extracts token usage. Returns a new Response carrying the
- * client-facing branch and the original status/headers. Usage extraction never
- * throws into the client stream: a parse failure or an aborted client simply
- * yields no usage. When the body is absent the response is returned untouched.
+ * Wrap `response`'s body so the client receives unchanged bytes while the same
+ * read pass extracts token usage. Returns a new Response carrying the observed
+ * body and the original status/headers. Usage extraction never throws into the
+ * client stream: a parse failure or an aborted client simply yields no usage.
+ * When the body is absent the response is returned untouched.
  *
  * Pass the request's `signal` so a client disconnect cancels the observer
  * branch; combined with the runtime cancelling the client branch, that releases
@@ -525,16 +525,15 @@ export function observeResponseUsage(
   if (!body) {
     return response;
   }
-  const [clientBranch, observerBranch] = body.tee();
   const isSse = response.headers.get("content-type")?.includes("text/event-stream") ?? false;
-  void consumeUsage(observerBranch, isSse, fallbackModel, onUsage, signal, onOutcome).catch(
-    () => {},
+  return new Response(
+    streamWithUsageObservation(body, isSse, fallbackModel, onUsage, signal, onOutcome),
+    {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    },
   );
-  return new Response(clientBranch, {
-    headers: response.headers,
-    status: response.status,
-    statusText: response.statusText,
-  });
 }
 
 /** Extract and record token usage from an already-buffered response body. */
@@ -559,19 +558,22 @@ export function recordResponseTextUsage(
   accumulator.finish();
 }
 
-async function consumeUsage(
+function streamWithUsageObservation(
   stream: ReadableStream<Uint8Array>,
   isSse: boolean,
   fallbackModel: string,
   onUsage: (model: string, usage: TokenUsage) => void,
   signal?: AbortSignal,
   onOutcome?: (extracted: boolean) => void,
-): Promise<void> {
+): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
+  let aborted = signal?.aborted ?? false;
+  let released = false;
   const onAbort = () => {
+    aborted = true;
     reader.cancel().catch(() => {});
   };
-  if (signal?.aborted) {
+  if (aborted) {
     reader.cancel().catch(() => {});
   } else {
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -582,7 +584,7 @@ async function consumeUsage(
   // missing-usage completion — only record outcomes for streams we finished.
   const guardedOutcome = onOutcome
     ? (extracted: boolean) => {
-        if (!signal?.aborted) {
+        if (!aborted) {
           onOutcome(extracted);
         }
       }
@@ -592,35 +594,43 @@ async function consumeUsage(
   let bufferedBytes = 0;
   let overflowed = false;
 
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) {
-        break;
-      }
-      const chunk = decoder.decode(result.value, { stream: true });
-      if (isSse) {
-        buffer += chunk;
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          considerSseLine(line, accumulator.consider);
-        }
-        // Drop a pathologically long newline-less line so the buffer stays bounded.
-        if (buffer.length > USAGE_BUFFER_LIMIT_BYTES) {
-          buffer = "";
-        }
-      } else if (!overflowed) {
-        bufferedBytes += result.value.byteLength;
-        if (bufferedBytes > USAGE_BUFFER_LIMIT_BYTES) {
-          overflowed = true;
-          buffer = "";
-        } else {
-          buffer += chunk;
-        }
-      }
+  const release = (): void => {
+    if (released) {
+      return;
     }
-    // Flush any trailing bytes the streaming decoder is still holding.
+    released = true;
+    signal?.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  };
+
+  const observeChunk = (chunkBytes: Uint8Array): void => {
+    const chunk = decoder.decode(chunkBytes, { stream: true });
+    if (isSse) {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        considerSseLine(line, accumulator.consider);
+      }
+      // Drop a pathologically long newline-less line so the buffer stays bounded.
+      if (buffer.length > USAGE_BUFFER_LIMIT_BYTES) {
+        buffer = "";
+      }
+      return;
+    }
+    if (overflowed) {
+      return;
+    }
+    bufferedBytes += chunkBytes.byteLength;
+    if (bufferedBytes > USAGE_BUFFER_LIMIT_BYTES) {
+      overflowed = true;
+      buffer = "";
+      return;
+    }
+    buffer += chunk;
+  };
+
+  const finishObservation = (): void => {
     const finalBuffer = buffer + decoder.decode();
     if (isSse) {
       if (finalBuffer) {
@@ -632,12 +642,43 @@ async function consumeUsage(
         accumulator.consider(parsed);
       }
     }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    reader.releaseLock();
-  }
+    if (!aborted) {
+      safeFinishAccumulator(accumulator);
+    }
+  };
 
-  accumulator.finish();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const result = await reader.read().catch((error: unknown) => {
+        release();
+        controller.error(error);
+        return undefined;
+      });
+      if (!result) {
+        return;
+      }
+      if (result.done) {
+        finishObservation();
+        controller.close();
+        release();
+        return;
+      }
+      try {
+        observeChunk(result.value);
+      } catch {
+        // Metrics extraction is best-effort and must not affect the client body.
+      }
+      controller.enqueue(result.value);
+    },
+    async cancel(reason) {
+      aborted = true;
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
 }
 
 function createUsageAccumulator(
@@ -667,6 +708,14 @@ function createUsageAccumulator(
       onOutcome?.(usage !== undefined);
     },
   };
+}
+
+function safeFinishAccumulator(accumulator: { finish: () => void }): void {
+  try {
+    accumulator.finish();
+  } catch {
+    // Best-effort metrics extraction must never disturb the proxied response.
+  }
 }
 
 function considerSseLine(line: string, consider: (payload: unknown) => void): void {

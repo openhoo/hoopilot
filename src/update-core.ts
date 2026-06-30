@@ -131,8 +131,28 @@ export function versionFromTag(tag: string): string {
  * "darwin-arm64", "windows-x64". `platform`/`arch` use Node's process values.
  */
 export function assetSuffixFor(platform: string, arch: string, isMusl: boolean): string {
-  const os = platform === "win32" ? "windows" : platform === "darwin" ? "darwin" : "linux";
-  const cpu = arch === "arm64" || arch === "aarch64" ? "arm64" : "x64";
+  const os =
+    platform === "linux"
+      ? "linux"
+      : platform === "win32"
+        ? "windows"
+        : platform === "darwin"
+          ? "darwin"
+          : undefined;
+  if (!os) {
+    throw new Error(`Unsupported platform for standalone updates: ${platform}.`);
+  }
+
+  const cpu =
+    arch === "x64" || arch === "amd64"
+      ? "x64"
+      : arch === "arm64" || arch === "aarch64"
+        ? "arm64"
+        : undefined;
+  if (!cpu) {
+    throw new Error(`Unsupported architecture for standalone updates: ${arch}.`);
+  }
+
   const libc = os === "linux" && isMusl ? "-musl" : "";
   return `${os}-${cpu}${libc}`;
 }

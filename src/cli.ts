@@ -562,6 +562,7 @@ Options:
   -p, --port <port>                 Port to listen on. Default: 4141
       --host <host>                 Host to listen on. Default: 127.0.0.1
       --api-key <key>               Require clients to send Authorization: Bearer <key> or x-api-key: <key>
+                                    Non-loopback binds require at least 24 characters.
       --api-key-file <path>         Read the local API key from a file instead of argv
       --auth-file <path>            OAuth credential store path
       --copilot-api-base-url <url>  Copilot API base URL override

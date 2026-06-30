@@ -71,11 +71,12 @@ jobs:
       - name: Smoke-test the image
         run: |
           set -euo pipefail
+          api_key="ci-smoke-key-0123456789abcdef"
           docker run -d --name hoopilot-smoke \
-            -e HOOPILOT_API_KEY=ci-smoke-key -p 4141:4141 hoopilot:ci
+            -e HOOPILOT_API_KEY="$api_key" -p 4141:4141 hoopilot:ci
           ok=0
           for _ in $(seq 1 15); do
-            if curl -fsS -H "x-api-key: ci-smoke-key" \
+            if curl -fsS -H "x-api-key: $api_key" \
               http://127.0.0.1:4141/healthz >/dev/null 2>&1; then
               ok=1
               break
