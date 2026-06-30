@@ -1,6 +1,6 @@
 {
   "name": "@openhoo/hoopilot",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "packageManager": "bun@1.3.14",
   "description": "OpenAI-compatible local proxy for GitHub Copilot accounts.",
   "repository": {

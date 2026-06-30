@@ -1,5 +1,15 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.8 (2026-06-30)
+
+### Other Changes
+
+- **deps:** update actions/attest digest to a1948c3 (0abc30c)
+
+### Bug Fixes
+
+- beautify terminal logs (eafb9fd)
+
 ## 2.1.7 (2026-06-30)
 
 ### Other Changes
