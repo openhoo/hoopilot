@@ -1,5 +1,11 @@
 # @openhoo/hoopilot Changelog
 
+## 2.1.11 (2026-07-02)
+
+### Bug Fixes
+
+- reduce compaction token overhead (f2223a5)
+
 ## 2.1.10 (2026-06-30)
 
 ### Bug Fixes
