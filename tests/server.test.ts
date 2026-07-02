@@ -429,6 +429,7 @@ describe("createHoopilotHandler", () => {
             ],
             instructions: "Summarize the conversation so far.",
             model: "gpt-5.5",
+            reasoning: { effort: "xhigh" },
           }),
           method: "POST",
         }),
@@ -439,12 +440,14 @@ describe("createHoopilotHandler", () => {
       expect(last.url).toBe("https://api.githubcopilot.com/responses");
       // Compaction is a unary request even though Codex normally streams.
       const upstreamBody = await last.json();
-      expect(upstreamBody).toMatchObject({ model: "gpt-5.5", stream: false, tools: [] });
-      expect(upstreamBody.input.at(-1)).toMatchObject({
-        content: [expect.objectContaining({ text: expect.stringContaining("CONTEXT CHECKPOINT") })],
-        role: "user",
-        type: "message",
+      expect(upstreamBody).toMatchObject({
+        instructions: "Summarize the conversation so far.",
+        model: "gpt-5.5",
+        stream: false,
+        tools: [],
       });
+      expect(upstreamBody.reasoning).toBeUndefined();
+      expect(JSON.stringify(upstreamBody.input)).not.toContain("CONTEXT CHECKPOINT");
       await expect(response.json()).resolves.toMatchObject({
         output: [
           expect.objectContaining({
@@ -478,6 +481,7 @@ describe("createHoopilotHandler", () => {
             { type: "compaction_trigger" },
           ],
           model: "gpt-5.5",
+          reasoning: { effort: "xhigh" },
           stream: true,
         }),
         method: "POST",
@@ -487,6 +491,8 @@ describe("createHoopilotHandler", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const upstreamBody = await upstreamRequests[0]!.json();
+    expect(upstreamBody.instructions).toContain("CONTEXT CHECKPOINT");
+    expect(upstreamBody.reasoning).toBeUndefined();
     expect(upstreamBody.stream).toBe(false);
     expect(
       upstreamBody.input.some((item: { type?: string }) => item.type === "compaction_trigger"),

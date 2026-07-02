@@ -161,15 +161,10 @@ export function responsesCompactionRequestBody(request: JsonObject): string {
   return JSON.stringify(
     removeUndefined({
       ...request,
-      input: [
-        ...compactionInputItemsForCopilot(request.input),
-        {
-          content: [{ text: COMPACTION_SUMMARIZATION_PROMPT, type: "input_text" }],
-          role: "user",
-          type: "message",
-        },
-      ],
+      input: compactionInputItemsForCopilot(request.input),
+      instructions: compactionInstructionsForCopilot(request.instructions),
       parallel_tool_calls: false,
+      reasoning: undefined,
       stream: false,
       tool_choice: "none",
       tools: [],
@@ -956,6 +951,10 @@ function compactionInputItemsForCopilot(input: unknown): unknown[] {
         },
       ]
     : [];
+}
+
+function compactionInstructionsForCopilot(instructions: unknown): unknown {
+  return contentToText(instructions).trim() ? instructions : COMPACTION_SUMMARIZATION_PROMPT;
 }
 
 function responseInputItems(input: unknown): unknown[] {

@@ -353,25 +353,37 @@ describe("responsesCompactionResult", () => {
         { type: "compaction_trigger" },
       ],
       model: "gpt-5.5",
+      reasoning: { effort: "xhigh" },
       stream: true,
       tools: [{ name: "shell", type: "function" }],
     };
     const bodyText = responsesCompactionRequestBody(request);
     const body = JSON.parse(bodyText);
 
+    expect(body.instructions).toContain("CONTEXT CHECKPOINT");
+    expect(body.reasoning).toBeUndefined();
     expect(body.stream).toBe(false);
     expect(body.tools).toEqual([]);
     expect(responsesCompactionRequestBody(request)).toBe(bodyText);
-    expect(body.input).toHaveLength(2);
-    expect(body.input.at(-1)).toMatchObject({
-      content: [expect.objectContaining({ text: expect.stringContaining("CONTEXT CHECKPOINT") })],
-      role: "user",
-      type: "message",
-    });
-    expect(body.input.at(-1).id).toBeUndefined();
+    expect(body.input).toHaveLength(1);
     expect(body.input.some((item: { type?: string }) => item.type === "compaction_trigger")).toBe(
       false,
     );
+  });
+
+  it("respects caller compaction instructions without adding a second prompt", () => {
+    const body = JSON.parse(
+      responsesCompactionRequestBody({
+        input: [{ content: [{ text: "old", type: "input_text" }], role: "user", type: "message" }],
+        instructions: "Summarize the conversation so far.",
+        model: "gpt-5.5",
+        reasoning: { effort: "xhigh" },
+      }),
+    );
+
+    expect(body.instructions).toBe("Summarize the conversation so far.");
+    expect(body.reasoning).toBeUndefined();
+    expect(JSON.stringify(body.input)).not.toContain("CONTEXT CHECKPOINT");
   });
 
   it("detects and normalizes compaction items in normal Responses requests", () => {
