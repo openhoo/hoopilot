@@ -62,7 +62,7 @@
     "@types/node": "^26.0.1",
     "esbuild": "0.28.1",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.0"
   },
   "dependencies": {
     "elysia": "^1.4.29",
